@@ -54,8 +54,6 @@ class SparkOptimizer(
       PartitionPruning) :+
     Batch("InjectRuntimeFilter", FixedPoint(1),
       InjectRuntimeFilter) :+
-    Batch("MergeScalarSubqueries", Once,
-      MergeScalarSubqueries) :+
     Batch("Pushdown Filters from PartitionPruning", fixedPoint,
       PushDownPredicates) :+
     Batch("Cleanup filters that cannot be pushed down", Once,
@@ -79,6 +77,9 @@ class SparkOptimizer(
       PushPredicateThroughNonJoin,
       RemoveNoopOperators) :+
     Batch("User Provided Optimizers", fixedPoint, experimentalMethods.extraOptimizations: _*) :+
+    Batch("Merge Scalar Subqueries", Once,
+      MergeScalarSubqueries,
+      RewriteDistinctAggregates) :+
     Batch("Replace CTE with Repartition", Once, ReplaceCTERefWithRepartition)
 
   override def nonExcludableRules: Seq[String] = super.nonExcludableRules :+

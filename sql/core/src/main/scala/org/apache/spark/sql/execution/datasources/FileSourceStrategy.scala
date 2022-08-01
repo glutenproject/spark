@@ -54,8 +54,14 @@ import org.apache.spark.util.collection.BitSet
  *     is under the threshold with the addition of the next file, add it.  If not, open a new bucket
  *     and add it.  Proceed to the next file.
  */
-object FileSourceStrategy extends Strategy with PredicateHelper with Logging {
+object FileSourceStrategy extends Strategy {
+  def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
+    case FileSourceScanPlan(scanPlan, _) => scanPlan :: Nil
+    case _ => Nil
+  }
+}
 
+object FileSourceScanPlan extends PredicateHelper with Logging {
   // should prune buckets iff num buckets is greater than 1 and there is only one bucket column
   private def shouldPruneBuckets(bucketSpec: Option[BucketSpec]): Boolean = {
     bucketSpec match {
@@ -145,7 +151,7 @@ object FileSourceStrategy extends Strategy with PredicateHelper with Logging {
     }
   }
 
-  def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
+  def unapply(plan: LogicalPlan): Option[(SparkPlan, FileSourceScanExec)] = plan match {
     case PhysicalOperation(projects, filters,
       l @ LogicalRelation(fsRelation: HadoopFsRelation, _, table, _)) =>
       // Filters on this relation fall into four categories based on where we can use them to avoid
@@ -291,8 +297,8 @@ object FileSourceStrategy extends Strategy with PredicateHelper with Logging {
         execution.ProjectExec(projects, withFilter)
       }
 
-      withProjections :: Nil
+      Some(withProjections, scan)
 
-    case _ => Nil
+    case _ => None
   }
 }

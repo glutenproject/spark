@@ -3875,6 +3875,15 @@ object SQLConf {
       .booleanConf
       .createWithDefault(false)
 
+  val PLAN_MERGE_IGNORE_PUSHED_PUSHED_DATA_FILTERS =
+    buildConf("spark.sql.planMerge.ignorePushedDataFilters")
+      .internal()
+      .doc(s"When set to true plan merging is enabled even if physical scan operations have " +
+        "different data filters pushed down.")
+      .version("3.4.0")
+      .booleanConf
+      .createWithDefault(true)
+
   val ERROR_MESSAGE_FORMAT = buildConf("spark.sql.error.messageFormat")
     .doc("When PRETTY, the error message consists of textual representation of error class, " +
       "message and query context. The MINIMAL and STANDARD formats are pretty JSON formats where " +

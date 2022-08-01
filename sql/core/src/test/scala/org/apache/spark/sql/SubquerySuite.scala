@@ -2177,6 +2177,126 @@ class SubquerySuite extends QueryTest with SharedSparkSession with AdaptiveSpark
     }
   }
 
+  test("Merge non-correlated scalar subqueries with different filters") {
+    Seq(false, true).foreach { enableAQE =>
+      withSQLConf(
+        SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> enableAQE.toString) {
+        val df = sql(
+          """
+            |SELECT
+            |  (SELECT max(key) AS key FROM testData WHERE value < '50'),
+            |  (SELECT sum(key) AS key FROM testData WHERE value = '50'),
+            |  (SELECT count(distinct key) AS key FROM testData WHERE value > '50')
+          """.stripMargin)
+
+        checkAnswer(df, Row(100, 50, 53) :: Nil)
+
+        val plan = df.queryExecution.executedPlan
+        val subqueryIds = collectWithSubqueries(plan) { case s: SubqueryExec => s.id }
+        val reusedSubqueryIds = collectWithSubqueries(plan) {
+          case rs: ReusedSubqueryExec => rs.child.id
+        }
+
+        assert(subqueryIds.size == 1, "Missing or unexpected SubqueryExec in the plan")
+        assert(reusedSubqueryIds.size == 2,
+          "Missing or unexpected reused ReusedSubqueryExec in the plan")
+      }
+    }
+  }
+
+  test("Merge non-correlated scalar subqueries with different filters that can be pushed down") {
+    withTable("td") {
+      testData
+        .withColumn("partition", $"key" % 10)
+        .withColumn("bucket", $"key" % 3)
+        .write
+        .mode(SaveMode.Overwrite)
+        .partitionBy("partition")
+        .bucketBy(2, "bucket")
+        .format("parquet")
+        .saveAsTable("td")
+      Seq(false, true).foreach { enableAQE =>
+        withSQLConf(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> enableAQE.toString) {
+          Seq(false, true).foreach { ignoreDataFilters =>
+            withSQLConf(SQLConf.PLAN_MERGE_IGNORE_PUSHED_PUSHED_DATA_FILTERS.key ->
+                ignoreDataFilters.toString) {
+              val df = sql(
+                """
+                  SELECT
+                  |  (SELECT sum(key) FROM td WHERE key < 50 AND partition < 5 AND bucket = 1),
+                  |  (SELECT sum(key) FROM td WHERE key < 50 AND partition >= 5 AND bucket = 1),
+                  |  (SELECT sum(key) FROM td WHERE key < 50 AND partition < 5 AND bucket = 2),
+                  |  (SELECT sum(value) FROM td WHERE key < 100 AND partition < 5 AND bucket = 1),
+                  |  (SELECT sum(value) FROM td WHERE key < 100 AND partition >= 5 AND bucket = 1),
+                  |  (SELECT sum(value) FROM td WHERE key < 100 AND partition < 5 AND bucket = 2)
+              """.stripMargin)
+
+              checkAnswer(df, Row(198, 227, 187, 785, 832, 752) :: Nil)
+
+              val plan = df.queryExecution.executedPlan
+              val subqueryIds = collectWithSubqueries(plan) { case s: SubqueryExec => s.id }
+              val reusedSubqueryIds = collectWithSubqueries(plan) {
+                case rs: ReusedSubqueryExec => rs.child.id
+              }
+
+              if (ignoreDataFilters) {
+                assert(subqueryIds.size == 3, "Missing or unexpected SubqueryExec in the plan")
+                assert(reusedSubqueryIds.size == 3,
+                  "Missing or unexpected reused ReusedSubqueryExec in the plan")
+              } else {
+                assert(subqueryIds.size == 6, "Missing or unexpected SubqueryExec in the plan")
+                assert(reusedSubqueryIds.size == 0,
+                  "Missing or unexpected reused ReusedSubqueryExec in the plan")
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("Merge non-correlated scalar subqueries with different filters that can't be pushed down") {
+    withTable("td") {
+      testData.write.mode(SaveMode.Overwrite).format("parquet").saveAsTable("td")
+      Seq(false, true).foreach { enableAQE =>
+        withSQLConf(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> enableAQE.toString) {
+          Seq(false, true).foreach { ignoreDataFilters =>
+            withSQLConf(SQLConf.PLAN_MERGE_IGNORE_PUSHED_PUSHED_DATA_FILTERS.key ->
+              ignoreDataFilters.toString) {
+              val df = sql(
+                """
+                  SELECT
+                  |  (
+                  |    SELECT sum(key)
+                  |    FROM (SELECT max(key) AS key FROM td GROUP BY value)
+                  |    WHERE key < 50
+                  |  ),
+                  |  (
+                  |    SELECT sum(key)
+                  |    FROM (SELECT max(key) AS key FROM td GROUP BY value)
+                  |    WHERE key < 100
+                  |  )
+              """.stripMargin)
+
+              checkAnswer(df, Row(1225, 4950) :: Nil)
+
+              val plan = df.queryExecution.executedPlan
+              val subqueryIds = collectWithSubqueries(plan) { case s: SubqueryExec => s.id }
+              val reusedSubqueryIds = collectWithSubqueries(plan) {
+                case rs: ReusedSubqueryExec => rs.child.id
+              }
+
+              assert(subqueryIds.size == 1, "Missing or unexpected SubqueryExec in the plan")
+              assert(reusedSubqueryIds.size == 1,
+                  "Missing or unexpected reused ReusedSubqueryExec in the plan")
+
+            }
+          }
+        }
+      }
+    }
+  }
+
   test("SPARK-39355: Single column uses quoted to construct UnresolvedAttribute") {
     checkAnswer(
       sql("""
