@@ -252,9 +252,11 @@ class BitSet(numBits: Int) extends Serializable {
   private def bit2words(numBits: Int) = ((numBits - 1) >> 6) + 1
 
   override def equals(other: Any): Boolean = other match {
-    case otherSet: BitSet => numWords == otherSet.numWords && Arrays.equals(words, otherSet.words)
+    case otherSet: BitSet => Arrays.equals(words, otherSet.words)
     case _ => false
   }
 
-  override def hashCode(): Int = Arrays.hashCode(words)
+  override def hashCode(): Int = {
+    Arrays.hashCode(words)
+  }
 }
