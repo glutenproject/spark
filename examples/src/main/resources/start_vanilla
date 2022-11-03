@@ -1,0 +1,35 @@
+./stop_thrift
+SPARK_HOME=/home/sparkuser/tpcds/spark
+THRIFTSERVER_START_CMD="${SPARK_HOME}/sbin/start-thriftserver.sh"
+THRIFTSERVER_STOP_CMD="${SPARK_HOME}/sbin/stop-thriftserver.sh"
+
+
+batchsize=20480
+
+
+runname_base=vanilla_tpcds_power_jenkins
+runname="${runname_base}_${1}"
+
+THRIFTSERVER_CONFIG="--name ${runname}
+--driver-memory 5g 
+--num-executors 18 
+--driver-memory 20g 
+--executor-memory 20g 
+--executor-cores 4 
+--master yarn 
+--deploy-mode client 
+--conf spark.executor.memoryOverhead=384M
+--conf spark.sql.inMemoryColumnarStorage.batchSize=${batchsize} 
+--conf spark.sql.execution.arrow.maxRecordsPerBatch=${batchsize} 
+--conf spark.sql.parquet.columnarReaderBatchSize=${batchsize} 
+--hiveconf hive.server2.thrift.port=10001 
+--hiveconf hive.server2.thrift.bind.host=sr614 
+--conf spark.sql.broadcastTimeout=300 
+--conf spark.driver.maxResultSize=20g 
+--conf spark.sql.shuffle.partitions=432 
+--conf spark.sql.optimizer.runtime.bloomFilter.applicationSideScanSizeThreshold=0
+--conf spark.sql.optimizer.runtime.bloomFilter.enabled=true
+--conf spark.sql.optimizer.runtimeFilter.semiJoinReduction.enabled=true"
+
+$THRIFTSERVER_START_CMD $THRIFTSERVER_CONFIG
+
