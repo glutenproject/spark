@@ -105,8 +105,10 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
       // i.e., the semi-join will be a shuffled join, which is not worthwhile.
       return filterApplicationSidePlan
     }
+    val project = Project(
+      aggregate.output.map(mayWrapWithHash).map(h => Alias(h, h.toString)()), aggregate)
     val filter = InSubquery(Seq(mayWrapWithHash(filterApplicationSideExp)),
-      ListQuery(aggregate, childOutputs = aggregate.output))
+      ListQuery(project, childOutputs = project.output))
     Filter(filter, filterApplicationSidePlan)
   }
 
