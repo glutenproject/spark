@@ -261,7 +261,8 @@ abstract class InMemoryBaseTable(
   }
 
   class InMemoryScanBuilder(tableSchema: StructType) extends ScanBuilder
-      with SupportsPushDownRequiredColumns {
+      with SupportsPushDownRequiredColumns with SupportsPushDownFilters
+    with SupportsPushDownV2Filters {
     private var schema: StructType = tableSchema
 
     override def build: Scan =
@@ -271,6 +272,23 @@ abstract class InMemoryBaseTable(
       val schemaNames = metadataColumnNames ++ tableSchema.map(_.name)
       schema = StructType(requiredSchema.filter(f => schemaNames.contains(f.name)))
     }
+
+    private var _pushedFilters: Array[Filter] = Array.empty
+    private var _pushedPredicates: Array[Predicate] = Array.empty
+
+    override def pushFilters(filters: Array[Filter]): Array[Filter] = {
+      this._pushedFilters = filters
+      this._pushedFilters
+    }
+
+    override def pushedFilters(): Array[Filter] = this._pushedFilters
+
+    override def pushPredicates(predicates: Array[Predicate]): Array[Predicate] = {
+      this._pushedPredicates = predicates
+      this._pushedPredicates
+    }
+
+    override def pushedPredicates(): Array[Predicate] = this._pushedPredicates
   }
 
   case class InMemoryStats(sizeInBytes: OptionalLong, numRows: OptionalLong) extends Statistics
