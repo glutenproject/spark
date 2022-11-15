@@ -1,3 +1,4 @@
+#skip_master
 ./stop_thrift
 SPARK_HOME=/home/sparkuser/tpcds/spark
 THRIFTSERVER_START_CMD="${SPARK_HOME}/sbin/start-thriftserver.sh"
@@ -14,7 +15,7 @@ THRIFTSERVER_CONFIG="--name ${runname}
 --driver-memory 5g 
 --num-executors 18 
 --driver-memory 20g 
---executor-memory 25g
+--executor-memory 20g
 --executor-cores 4
 --master yarn 
 --deploy-mode client 
