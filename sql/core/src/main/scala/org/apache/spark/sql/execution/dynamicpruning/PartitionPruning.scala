@@ -114,8 +114,7 @@ object PartitionPruning extends Rule[LogicalPlan] with PredicateHelper with Join
         DynamicPruningSubquery(
           pruningKey,
           filteringPlan,
-          joinKeys,
-          index,
+          joinKeys(index),
           conf.dynamicPartitionPruningReuseBroadcastOnly || !hasBenefit),
         pruningPlan)
     } else {

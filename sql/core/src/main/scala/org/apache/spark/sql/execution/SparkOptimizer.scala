@@ -56,7 +56,7 @@ class SparkOptimizer(
       // only invokes `OptimizeSubqueries` to optimize newly added subqueries.
       new RowLevelOperationRuntimeGroupFiltering(OptimizeSubqueries)) :+
     Batch("InjectRuntimeFilter", FixedPoint(1),
-      InjectRuntimeFilter) :+
+      InjectRuntimeFilter2) :+
     Batch("MergeScalarSubqueries", Once,
       MergeScalarSubqueries) :+
     Batch("Pushdown Filters from PartitionPruning", fixedPoint,

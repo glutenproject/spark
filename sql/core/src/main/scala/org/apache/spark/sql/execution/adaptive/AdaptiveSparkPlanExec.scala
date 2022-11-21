@@ -117,6 +117,7 @@ case class AdaptiveSparkPlanExec(
       EnsureRequirements(requiredDistribution.isDefined, requiredDistribution)
     Seq(
       RemoveRedundantProjects,
+      OptimizeBuildBloomFilter,
       ensureRequirements,
       AdjustShuffleExchangePosition,
       ValidateSparkPlan,
@@ -147,6 +148,7 @@ case class AdaptiveSparkPlanExec(
   // A list of physical optimizer rules to be applied right after a new stage is created. The input
   // plan to these rules has exchange as its root node.
   private def postStageCreationRules(outputsColumnar: Boolean) = Seq(
+    RemoveBloomFilter,
     ApplyColumnarRulesAndInsertTransitions(
       context.session.sessionState.columnarRules, outputsColumnar),
     collapseCodegenStagesRule

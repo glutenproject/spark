@@ -19,7 +19,7 @@ package org.apache.spark.sql
 
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.sql.catalyst.expressions.{DynamicPruningExpression, Expression}
+import org.apache.spark.sql.catalyst.expressions.{BloomFilterMightContain, DynamicPruningExpression, Expression}
 import org.apache.spark.sql.catalyst.expressions.CodegenObjectFactoryMode._
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
 import org.apache.spark.sql.connector.catalog.{InMemoryTableCatalog, InMemoryTableWithV2FilterCatalog}
@@ -189,6 +189,7 @@ abstract class DynamicPartitionPruningSuiteBase
     val dpExprs = collectDynamicPruningExpressions(plan)
     val hasSubquery = dpExprs.exists {
       case InSubqueryExec(_, _: SubqueryExec, _, _, _, _) => true
+      case _: BloomFilterMightContain => true
       case _ => false
     }
     val subqueryBroadcast = dpExprs.collect {
@@ -1614,6 +1615,46 @@ abstract class DynamicPartitionPruningSuiteBase
       checkPartitionPruningPredicate(df, withSubquery = false, withBroadcast = true)
       checkAnswer(df, Row(4, 1300, "California") :: Row(1, 1000, "North-Holland") :: Nil)
       assert(collectDynamicPruningExpressions(df.queryExecution.executedPlan).size === 1)
+    }
+  }
+
+  test("SPARK-32628: Use bloom filter if build side can not broadcast by size") {
+    withSQLConf(SQLConf.DYNAMIC_PARTITION_PRUNING_ENABLED.key -> "true",
+      SQLConf.DYNAMIC_PARTITION_PRUNING_REUSE_BROADCAST_ONLY.key -> "false") {
+      Seq(true, false).foreach { reuseExchange =>
+        Seq(-1, SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.defaultValue.get).foreach { threshold =>
+          withSQLConf(
+            SQLConf.EXCHANGE_REUSE_ENABLED.key -> reuseExchange.toString,
+            SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> threshold.toString) {
+            val df = sql(
+              """
+                |SELECT f.date_id, f.store_id FROM fact_sk f
+                |JOIN dim_store s ON f.store_id = s.store_id AND s.country = 'NL'
+              """.stripMargin)
+
+            (reuseExchange, threshold) match {
+              case (true, -1) =>
+                checkPartitionPruningPredicate(df, true, false)
+                assert(collectDynamicPruningExpressions(df.queryExecution.executedPlan).exists {
+                  case _: BloomFilterMightContain => true
+                  case _ => false
+                })
+              case (true, _) =>
+                checkPartitionPruningPredicate(df, false, true)
+              case (false, -1) =>
+                checkPartitionPruningPredicate(df, false, false)
+              case (false, _) =>
+                checkPartitionPruningPredicate(df, true, false)
+                assert(collectDynamicPruningExpressions(df.queryExecution.executedPlan).exists {
+                  case InSubqueryExec(_, _: SubqueryExec, _, _, _, _) => true
+                  case _ => false
+                })
+            }
+
+            checkAnswer(df, Row(1000, 1) :: Row(1010, 2) :: Row(1020, 2) :: Nil)
+          }
+        }
+      }
     }
   }
 }

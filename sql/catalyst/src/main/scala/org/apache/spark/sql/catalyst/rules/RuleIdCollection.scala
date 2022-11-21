@@ -158,7 +158,9 @@ object RuleIdCollection {
       "org.apache.spark.sql.catalyst.optimizer.SimplifyConditionals" ::
       "org.apache.spark.sql.catalyst.optimizer.SimplifyExtractValueOps" ::
       "org.apache.spark.sql.catalyst.optimizer.TransposeWindow" ::
-      "org.apache.spark.sql.catalyst.optimizer.UnwrapCastInBinaryComparison" ::  Nil
+      "org.apache.spark.sql.catalyst.optimizer.UnwrapCastInBinaryComparison" ::
+      // AQE Optimizer rules
+      "org.apache.spark.sql.execution.adaptive.OptimizeBuildBloomFilter" ::  Nil
   }
 
   if(Utils.isTesting) {

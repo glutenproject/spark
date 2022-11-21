@@ -19,14 +19,14 @@ package org.apache.spark.sql.execution.dynamicpruning
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeSeq, BindReferences, DynamicPruningExpression, DynamicPruningSubquery, Expression, ListQuery, Literal}
-import org.apache.spark.sql.catalyst.optimizer.{BuildLeft, BuildRight}
+import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeSeq, BindReferences, BloomFilterMightContain, DynamicPruningExpression, DynamicPruningSubquery, Expression, ListQuery, Literal, XxHash64}
+import org.apache.spark.sql.catalyst.optimizer.{BuildLeft, BuildRight, JoinSelectionHelper}
 import org.apache.spark.sql.catalyst.plans.logical.Aggregate
 import org.apache.spark.sql.catalyst.plans.physical.BroadcastMode
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.DYNAMIC_PRUNING_SUBQUERY
-import org.apache.spark.sql.execution.{InSubqueryExec, QueryExecution, SparkPlan, SubqueryBroadcastExec}
-import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
+import org.apache.spark.sql.execution.{InSubqueryExec, QueryExecution, ScalarSubquery => ScalarSubqueryExec, SparkPlan, SubqueryBroadcastExec, SubqueryExec}
+import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, EnsureRequirements, ShuffleExchangeExec}
 import org.apache.spark.sql.execution.joins._
 
 /**
@@ -34,7 +34,8 @@ import org.apache.spark.sql.execution.joins._
  * results of broadcast. For joins that are not planned as broadcast hash joins we keep
  * the fallback mechanism with subquery duplicate.
 */
-case class PlanDynamicPruningFilters(sparkSession: SparkSession) extends Rule[SparkPlan] {
+case class PlanDynamicPruningFilters(sparkSession: SparkSession)
+  extends Rule[SparkPlan] with JoinSelectionHelper with DynamicPruningHelper  {
 
   /**
    * Identify the shape in which keys of a given plan are broadcasted.
@@ -50,40 +51,63 @@ case class PlanDynamicPruningFilters(sparkSession: SparkSession) extends Rule[Sp
     }
 
     plan.transformAllExpressionsWithPruning(_.containsPattern(DYNAMIC_PRUNING_SUBQUERY)) {
-      case DynamicPruningSubquery(
-          value, buildPlan, buildKeys, broadcastKeyIndex, onlyInBroadcast, exprId) =>
+      case DynamicPruningSubquery(value, buildPlan, buildKey, onlyInBroadcast, exprId) =>
         val sparkPlan = QueryExecution.createSparkPlan(
           sparkSession, sparkSession.sessionState.planner, buildPlan)
         // Using `sparkPlan` is a little hacky as it is based on the assumption that this rule is
         // the first to be applied (apart from `InsertAdaptiveSparkPlan`).
-        val canReuseExchange = conf.exchangeReuseEnabled && buildKeys.nonEmpty &&
-          plan.exists {
-            case BroadcastHashJoinExec(_, _, _, BuildLeft, _, left, _, _) =>
-              left.sameResult(sparkPlan)
-            case BroadcastHashJoinExec(_, _, _, BuildRight, _, _, right, _) =>
-              right.sameResult(sparkPlan)
-            case _ => false
-          }
+        lazy val exchangeKeys = plan.collectFirst {
+          case BroadcastHashJoinExec(leftKeys, _, _, BuildLeft, _, left, _, _)
+            if left.sameResult(sparkPlan) =>
+            leftKeys.map { e =>
+              sparkPlan.output(left.output.indexWhere(_.semanticEquals(e)))
+            }
+          case BroadcastHashJoinExec(_, rightKeys, _, BuildRight, _, _, right, _)
+            if right.sameResult(sparkPlan) =>
+            rightKeys.map { e =>
+              sparkPlan.output(right.output.indexWhere(_.semanticEquals(e)))
+            }
+        }
 
-        if (canReuseExchange) {
+        if (conf.exchangeReuseEnabled && exchangeKeys.nonEmpty) {
+          val buildKeys = exchangeKeys.get
+          val index = buildKeys.indexWhere(_.semanticEquals(buildKey))
           val executedPlan = QueryExecution.prepareExecutedPlan(sparkSession, sparkPlan)
           val mode = broadcastMode(buildKeys, executedPlan.output)
           // plan a broadcast exchange of the build side of the join
           val exchange = BroadcastExchangeExec(mode, executedPlan)
           val name = s"dynamicpruning#${exprId.id}"
           // place the broadcast adaptor for reusing the broadcast results on the probe side
-          val broadcastValues =
-            SubqueryBroadcastExec(name, broadcastKeyIndex, buildKeys, exchange)
+          val broadcastValues = SubqueryBroadcastExec(name, index, buildKeys, exchange)
           DynamicPruningExpression(InSubqueryExec(value, broadcastValues, exprId))
         } else if (onlyInBroadcast) {
           // it is not worthwhile to execute the query, so we fall-back to a true literal
           DynamicPruningExpression(Literal.TrueLiteral)
-        } else {
+        } else if (canBroadcastBySize(buildPlan, conf) && false) {
           // we need to apply an aggregate on the buildPlan in order to be column pruned
-          val alias = Alias(buildKeys(broadcastKeyIndex), buildKeys(broadcastKeyIndex).toString)()
+          val alias = Alias(buildKey, buildKey.toString)()
           val aggregate = Aggregate(Seq(alias), Seq(alias), buildPlan)
           DynamicPruningExpression(expressions.InSubquery(
             Seq(value), ListQuery(aggregate, childOutputs = aggregate.output)))
+        } else if (!conf.exchangeReuseEnabled) {
+          DynamicPruningExpression(Literal.TrueLiteral)
+        } else {
+          val reusedShuffleExchange = plan.collectFirst {
+            case j: ShuffledJoin if j.left.sameResult(sparkPlan) || j.right.sameResult(sparkPlan) =>
+              EnsureRequirements()(j).collectFirst {
+                case s: ShuffleExchangeExec if s.child.sameResult(sparkPlan) => s
+              }
+          }.flatten
+
+          val bfLogicalPlan = planBloomFilterLogicalPlan(buildPlan, buildKey)
+          val bfPhysicalPlan =
+            planBloomFilterPhysicalPlan(bfLogicalPlan, reusedShuffleExchange).map { plan =>
+              val executedPlan = QueryExecution.prepareExecutedPlan(sparkSession, plan)
+              val scalarSubquery = ScalarSubqueryExec(SubqueryExec.createForScalarSubquery(
+                s"scalar-subquery#${exprId.id}", executedPlan), exprId)
+            BloomFilterMightContain(scalarSubquery, new XxHash64(value))
+          }.getOrElse(Literal.TrueLiteral)
+          DynamicPruningExpression(bfPhysicalPlan)
         }
     }
   }

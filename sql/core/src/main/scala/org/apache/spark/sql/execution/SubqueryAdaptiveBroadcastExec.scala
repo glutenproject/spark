@@ -34,10 +34,9 @@ import org.apache.spark.sql.errors.QueryExecutionErrors
  */
 case class SubqueryAdaptiveBroadcastExec(
     name: String,
-    index: Int,
     onlyInBroadcast: Boolean,
     @transient buildPlan: LogicalPlan,
-    buildKeys: Seq[Expression],
+    buildKey: Expression,
     child: SparkPlan) extends BaseSubqueryExec with UnaryExecNode {
 
   protected override def doExecute(): RDD[InternalRow] = {
@@ -45,8 +44,8 @@ case class SubqueryAdaptiveBroadcastExec(
   }
 
   protected override def doCanonicalize(): SparkPlan = {
-    val keys = buildKeys.map(k => QueryPlan.normalizeExpressions(k, child.output))
-    copy(name = "dpp", buildKeys = keys, child = child.canonicalized)
+    val key = QueryPlan.normalizeExpressions(buildKey, child.output)
+    copy(name = "dpp", buildKey = key, child = child.canonicalized)
   }
 
   override protected def withNewChildInternal(newChild: SparkPlan): SubqueryAdaptiveBroadcastExec =

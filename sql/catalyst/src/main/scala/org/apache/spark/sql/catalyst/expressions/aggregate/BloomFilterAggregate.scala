@@ -26,6 +26,7 @@ import org.apache.spark.sql.catalyst.analysis.TypeCheckResult._
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.Cast.{toSQLExpr, toSQLId, toSQLType, toSQLValue}
 import org.apache.spark.sql.catalyst.trees.TernaryLike
+import org.apache.spark.sql.catalyst.trees.TreePattern.{BUILD_BLOOM_FILTER, TreePattern}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.{RUNTIME_BLOOM_FILTER_MAX_NUM_BITS, RUNTIME_BLOOM_FILTER_MAX_NUM_ITEMS}
 import org.apache.spark.sql.types._
@@ -141,7 +142,7 @@ case class BloomFilterAggregate(
   override def prettyName: String = "bloom_filter_agg"
 
   // Mark as lazy so that `estimatedNumItems` is not evaluated during tree transformation.
-  private lazy val estimatedNumItems: Long =
+  private[sql] lazy val estimatedNumItems: Long =
     Math.min(estimatedNumItemsExpression.eval().asInstanceOf[Number].longValue,
       SQLConf.get.getConf(RUNTIME_BLOOM_FILTER_MAX_NUM_ITEMS))
 
@@ -155,6 +156,8 @@ case class BloomFilterAggregate(
   override def second: Expression = estimatedNumItemsExpression
 
   override def third: Expression = numBitsExpression
+
+  final override val nodePatterns: Seq[TreePattern] = Seq(BUILD_BLOOM_FILTER)
 
   override protected def withNewChildrenInternal(
       newChild: Expression,

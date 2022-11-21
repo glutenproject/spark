@@ -20,16 +20,14 @@ TakeOrderedAndProject [w_state,i_item_id,sales_before,sales_after]
                                       Exchange [cs_order_number,cs_item_sk] #2
                                         WholeStageCodegen (1)
                                           Filter [cs_warehouse_sk,cs_item_sk]
-                                            Subquery #2
-                                              ObjectHashAggregate [buf] [bloom_filter_agg(xxhash64(i_item_sk, 42), 1019, 24988, 0, 0),bloomFilter,buf]
-                                                Exchange #4
-                                                  ObjectHashAggregate [i_item_sk] [buf,buf]
-                                                    WholeStageCodegen (1)
-                                                      Project [i_item_sk]
-                                                        Filter [i_current_price,i_item_sk]
-                                                          ColumnarToRow
-                                                            InputAdapter
-                                                              Scan parquet spark_catalog.default.item [i_item_sk,i_current_price]
+                                            SubqueryBroadcast [i_item_sk] #2
+                                              BroadcastExchange #4
+                                                WholeStageCodegen (1)
+                                                  Project [i_item_sk,i_item_id]
+                                                    Filter [i_current_price,i_item_sk]
+                                                      ColumnarToRow
+                                                        InputAdapter
+                                                          Scan parquet spark_catalog.default.item [i_item_sk,i_item_id,i_current_price]
                                             ColumnarToRow
                                               InputAdapter
                                                 Scan parquet spark_catalog.default.catalog_sales [cs_warehouse_sk,cs_item_sk,cs_order_number,cs_sales_price,cs_sold_date_sk]
@@ -52,17 +50,11 @@ TakeOrderedAndProject [w_state,i_item_id,sales_before,sales_after]
                                                 InputAdapter
                                                   Scan parquet spark_catalog.default.catalog_returns [cr_item_sk,cr_order_number,cr_refunded_cash,cr_returned_date_sk]
                           InputAdapter
-                            BroadcastExchange #6
-                              WholeStageCodegen (5)
-                                Project [i_item_sk,i_item_id]
-                                  Filter [i_current_price,i_item_sk]
-                                    ColumnarToRow
-                                      InputAdapter
-                                        Scan parquet spark_catalog.default.item [i_item_sk,i_item_id,i_current_price]
+                            ReusedExchange [i_item_sk,i_item_id] #4
                       InputAdapter
                         ReusedExchange [d_date_sk,d_date] #3
                   InputAdapter
-                    BroadcastExchange #7
+                    BroadcastExchange #6
                       WholeStageCodegen (7)
                         Filter [w_warehouse_sk]
                           ColumnarToRow

@@ -31,6 +31,8 @@ object TreePattern extends Enumeration  {
   val APPEND_COLUMNS: Value = Value
   val AVERAGE: Value = Value
   val GROUPING_ANALYTICS: Value = Value
+  val BLOOM_FILTER_MIGHT_CONTAIN: Value = Value
+  val BUILD_BLOOM_FILTER: Value = Value
   val BINARY_ARITHMETIC: Value = Value
   val BINARY_COMPARISON: Value = Value
   val CASE_WHEN: Value = Value

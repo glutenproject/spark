@@ -32,18 +32,15 @@ trait DynamicPruning extends Predicate
  *
  * @param pruningKey the filtering key of the plan to be pruned.
  * @param buildQuery the build side of the join.
- * @param buildKeys the join keys corresponding to the build side of the join
  * @param onlyInBroadcast when set to false it indicates that the pruning filter is likely to be
  *  beneficial and so it should be executed even if it cannot reuse the results of the
  *  broadcast through ReuseExchange; otherwise, it will use the filter only if it
  *  can reuse the results of the broadcast through ReuseExchange
- * @param broadcastKeyIndex the index of the filtering key collected from the broadcast
  */
 case class DynamicPruningSubquery(
     pruningKey: Expression,
     buildQuery: LogicalPlan,
-    buildKeys: Seq[Expression],
-    broadcastKeyIndex: Int,
+    buildKey: Expression,
     onlyInBroadcast: Boolean,
     exprId: ExprId = NamedExpression.newExprId)
   extends SubqueryExpression(buildQuery, Seq(pruningKey), exprId)
@@ -62,12 +59,9 @@ case class DynamicPruningSubquery(
   override lazy val resolved: Boolean = {
     pruningKey.resolved &&
       buildQuery.resolved &&
-      buildKeys.nonEmpty &&
-      buildKeys.forall(_.resolved) &&
-      broadcastKeyIndex >= 0 &&
-      broadcastKeyIndex < buildKeys.size &&
-      buildKeys.forall(_.references.subsetOf(buildQuery.outputSet)) &&
-      pruningKey.dataType == buildKeys(broadcastKeyIndex).dataType
+      buildKey.resolved &&
+      buildKey.references.subsetOf(buildQuery.outputSet) &&
+      pruningKey.dataType == buildKey.dataType
   }
 
   final override def nodePatternsInternal: Seq[TreePattern] = Seq(DYNAMIC_PRUNING_SUBQUERY)
@@ -78,7 +72,7 @@ case class DynamicPruningSubquery(
     copy(
       pruningKey = pruningKey.canonicalized,
       buildQuery = buildQuery.canonicalized,
-      buildKeys = buildKeys.map(_.canonicalized),
+      buildKey = buildKey.canonicalized,
       exprId = ExprId(0))
   }
 

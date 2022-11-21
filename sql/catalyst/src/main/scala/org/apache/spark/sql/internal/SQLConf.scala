@@ -372,7 +372,7 @@ object SQLConf {
         "under this value to try to inject bloom filter.")
       .version("3.3.0")
       .bytesConf(ByteUnit.BYTE)
-      .createWithDefaultString("10MB")
+      .createWithDefaultString("100MB")
 
   val RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD =
     buildConf("spark.sql.optimizer.runtime.bloomFilter.applicationSideScanSizeThreshold")
