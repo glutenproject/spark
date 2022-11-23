@@ -1,3 +1,4 @@
+#enable_cbo
 ./stop_thrift
 SPARK_HOME=/home/sparkuser/tpcds/spark
 THRIFTSERVER_START_CMD="${SPARK_HOME}/sbin/start-thriftserver.sh"
