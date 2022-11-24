@@ -29,6 +29,11 @@ THRIFTSERVER_CONFIG="--name ${runname}
 --conf spark.sql.shuffle.partitions=432 
 --conf spark.sql.optimizer.runtime.bloomFilter.applicationSideScanSizeThreshold=0
 --conf spark.sql.optimizer.runtime.bloomFilter.enabled=true
+--conf spark.sql.cbo.enabled=true
+--conf spark.sql.cbo.joinReorder.enabled=true
+--conf spark.sql.cbo.planStats.enabled=true
+--conf spark.sql.statistics.histogram.enabled=true
+--conf spark.sql.optimizer.partialAggregationOptimization.enabled=true
 --conf spark.sql.optimizer.runtimeFilter.semiJoinReduction.enabled=true"
 
 $THRIFTSERVER_START_CMD $THRIFTSERVER_CONFIG

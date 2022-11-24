@@ -24,6 +24,7 @@ jobs:
       - run: free
       - name: Build Spark
         run: |
+          git log --oneline | head -5
           git clean -dfx
           JAVA_HOME=/home/sparkuser/jdk1.8.0_161
           PR_NUMBER=$(echo $GITHUB_REF | awk 'BEGIN { FS = "/" } ; { print $3 }')
