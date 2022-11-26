@@ -2574,7 +2574,7 @@ object SQLConf {
       " window-based top-k computation.")
     .version("3.4.0")
     .booleanConf
-    .createWithDefault(false)
+    .createWithDefault(true)
 
   val SESSION_WINDOW_BUFFER_IN_MEMORY_THRESHOLD =
     buildConf("spark.sql.sessionWindow.buffer.in.memory.threshold")
