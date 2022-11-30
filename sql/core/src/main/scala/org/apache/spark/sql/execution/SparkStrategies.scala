@@ -669,7 +669,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
 
       plan match {
         case filter @ Filter(condition,
-          logical.Window(windowExpressions, partitionSpec, orderSpec, child))
+          window @ logical.Window(windowExpressions, partitionSpec, orderSpec, child))
           if !child.isInstanceOf[logical.Window] &&
             supports(windowExpressions) && orderSpec.nonEmpty =>
           val limits = windowExpressions.collect {
@@ -685,7 +685,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
           minLimit match {
             case Some((limit, rankLikeFunction)) if limit <= conf.windowGroupLimitThreshold =>
               if (limit > 0) {
-                // TODO: add a physical rule to remove the partialLimitExec node,
+                // TODO: [SPARK-41337] add a physical rule to remove the partialLimitExec node,
                 // if there is no shuffle between the two nodes (partialLimitExec's
                 // outputPartitioning satisfies the finalLimitExec's requiredChildDistribution)
                 val partialLimitExec = execution.window.WindowGroupLimitExec(partitionSpec,
@@ -694,6 +694,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
                   orderSpec, rankLikeFunction, limit, execution.window.Final, partialLimitExec)
                 val windowExec = execution.window.WindowExec(
                   windowExpressions, partitionSpec, orderSpec, finalLimitExec)
+                windowExec.setLogicalLink(window)
                 val filterExec = execution.FilterExec(condition, windowExec)
                 filterExec :: Nil
               } else {
