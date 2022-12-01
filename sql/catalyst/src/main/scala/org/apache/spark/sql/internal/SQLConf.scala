@@ -381,7 +381,7 @@ object SQLConf {
         "this value to inject a bloom filter.")
       .version("3.3.0")
       .bytesConf(ByteUnit.BYTE)
-      .createWithDefaultString("2MB")
+      .createWithDefaultString("1MB")
 
   val RUNTIME_BLOOM_FILTER_EXPECTED_NUM_ITEMS =
     buildConf("spark.sql.optimizer.runtime.bloomFilter.expectedNumItems")
