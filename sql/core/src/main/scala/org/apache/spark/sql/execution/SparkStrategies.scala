@@ -660,7 +660,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
     private def supports(
         windowExpressions: Seq[NamedExpression]): Boolean = windowExpressions.exists {
       case Alias(WindowExpression(_: Rank | _: DenseRank | _: RowNumber, WindowSpecDefinition(_, _,
-      SpecifiedWindowFrame(RowFrame, UnboundedPreceding, CurrentRow))), _) => true
+        SpecifiedWindowFrame(RowFrame, UnboundedPreceding, CurrentRow))), _) => true
       case _ => false
     }
 
