@@ -1,4 +1,4 @@
-#skip_master
+#enable_cbo
 ./stop_thrift
 SPARK_HOME=/home/sparkuser/tpcds/spark
 THRIFTSERVER_START_CMD="${SPARK_HOME}/sbin/start-thriftserver.sh"
@@ -28,6 +28,8 @@ THRIFTSERVER_CONFIG="--name ${runname}
 --conf spark.sql.broadcastTimeout=300 
 --conf spark.driver.maxResultSize=20g 
 --conf spark.sql.shuffle.partitions=432 
+--conf spark.sql.cbo.enabled=true
+--conf spark.sql.cbo.joinReorder.enabled=true
 --conf spark.sql.optimizer.runtime.bloomFilter.enabled=true
 --conf spark.sql.optimizer.runtimeFilter.semiJoinReduction.enabled=true"
 
