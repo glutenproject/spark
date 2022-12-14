@@ -14,8 +14,8 @@ THRIFTSERVER_CONFIG="--name ${runname}
 --driver-memory 5g 
 --num-executors 18 
 --driver-memory 20g 
---executor-memory 20g 
---executor-cores 4 
+--executor-memory 20g
+--executor-cores 4
 --master yarn 
 --deploy-mode client 
 --conf spark.executor.memoryOverhead=384M
@@ -26,8 +26,7 @@ THRIFTSERVER_CONFIG="--name ${runname}
 --hiveconf hive.server2.thrift.bind.host=sr614 
 --conf spark.sql.broadcastTimeout=300 
 --conf spark.driver.maxResultSize=20g 
---conf spark.sql.shuffle.partitions=432 
---conf spark.sql.optimizer.runtime.bloomFilter.applicationSideScanSizeThreshold=0
+--conf spark.sql.shuffle.partitions=432
 --conf spark.sql.optimizer.runtime.bloomFilter.enabled=true
 --conf spark.sql.optimizer.runtimeFilter.semiJoinReduction.enabled=true"
 
