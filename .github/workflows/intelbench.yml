@@ -35,5 +35,5 @@ jobs:
       - name: Run TPCDS
         run: |
           PR_NUMBER=$(echo $GITHUB_REF | awk 'BEGIN { FS = "/" } ; { print $3 }')
-          cd /home/sparkuser/tpcds/test
+          cd /home/sparkuser/tpcds/test_311
           bash tpcds_spark.sh pr_${PR_NUMBER}
