@@ -8,7 +8,7 @@
                   from date_dim
                   where d_week_seq = (select d_week_seq
                                       from date_dim
-                                      where d_date = cast('2000-01-03' as date)))
+                                      where d_date = '2000-01-03'))
    and ss_sold_date_sk   = d_date_sk
  group by i_item_id),
  cs_items as
@@ -20,7 +20,7 @@
                   from date_dim
                   where d_week_seq = (select d_week_seq
                                       from date_dim
-                                      where d_date = cast('2000-01-03' as date)))
+                                      where d_date = '2000-01-03'))
   and  cs_sold_date_sk = d_date_sk
  group by i_item_id),
  ws_items as
@@ -31,7 +31,7 @@
                   from date_dim
                   where d_week_seq =(select d_week_seq
                                      from date_dim
-                                     where d_date = cast('2000-01-03' as date)))
+                                     where d_date = '2000-01-03'))
   and ws_sold_date_sk   = d_date_sk
  group by i_item_id)
  select ss_items.item_id

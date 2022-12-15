@@ -11,21 +11,21 @@
             ss_sold_date_sk  as date_sk,
             ss_ext_sales_price as sales_price,
             ss_net_profit as profit,
-            cast(0 as decimal(7,2)) as return_amt,
-            cast(0 as decimal(7,2)) as net_loss
+            cast(0 as double) as return_amt,
+            cast(0 as double) as net_loss
     FROM store_sales
     UNION ALL
     SELECT sr_store_sk as store_sk,
            sr_returned_date_sk as date_sk,
-           cast(0 as decimal(7,2)) as sales_price,
-           cast(0 as decimal(7,2)) as profit,
+           cast(0 as double) as sales_price,
+           cast(0 as double) as profit,
            sr_return_amt as return_amt,
            sr_net_loss as net_loss
     FROM store_returns)
     salesreturns, date_dim, store
   WHERE date_sk = d_date_sk
-       and d_date between cast('2000-08-23' as date)
-                  and ((cast('2000-08-23' as date) + interval '14' day))
+       and d_date between '2000-08-23' 
+                  and '2000-09-6'
        and store_sk = s_store_sk
  GROUP BY s_store_id),
  csr AS
@@ -39,21 +39,21 @@
            cs_sold_date_sk  as date_sk,
            cs_ext_sales_price as sales_price,
            cs_net_profit as profit,
-           cast(0 as decimal(7,2)) as return_amt,
-           cast(0 as decimal(7,2)) as net_loss
+           cast(0 as double) as return_amt,
+           cast(0 as double) as net_loss
     FROM catalog_sales
     UNION ALL
     SELECT cr_catalog_page_sk as page_sk,
            cr_returned_date_sk as date_sk,
-           cast(0 as decimal(7,2)) as sales_price,
-           cast(0 as decimal(7,2)) as profit,
+           cast(0 as double) as sales_price,
+           cast(0 as double) as profit,
            cr_return_amount as return_amt,
            cr_net_loss as net_loss
     from catalog_returns
    ) salesreturns, date_dim, catalog_page
  WHERE date_sk = d_date_sk
-       and d_date between cast('2000-08-23' as date)
-                  and ((cast('2000-08-23' as date) + interval '14' day))
+       and d_date between '2000-08-23' 
+                  and '2000-09-6'
        and page_sk = cp_catalog_page_sk
  GROUP BY cp_catalog_page_id)
  ,
@@ -68,14 +68,14 @@
             ws_sold_date_sk  as date_sk,
             ws_ext_sales_price as sales_price,
             ws_net_profit as profit,
-            cast(0 as decimal(7,2)) as return_amt,
-            cast(0 as decimal(7,2)) as net_loss
+            cast(0 as double) as return_amt,
+            cast(0 as double) as net_loss
     from web_sales
     union all
     select ws_web_site_sk as wsr_web_site_sk,
            wr_returned_date_sk as date_sk,
-           cast(0 as decimal(7,2)) as sales_price,
-           cast(0 as decimal(7,2)) as profit,
+           cast(0 as double) as sales_price,
+           cast(0 as double) as profit,
            wr_return_amt as return_amt,
            wr_net_loss as net_loss
     FROM web_returns LEFT  OUTER JOIN web_sales on
@@ -83,8 +83,8 @@
            and wr_order_number = ws_order_number)
    ) salesreturns, date_dim, web_site
  WHERE date_sk = d_date_sk
-       and d_date between cast('2000-08-23' as date)
-                  and ((cast('2000-08-23' as date) + interval '14' day))
+       and d_date between '2000-08-23'
+                  and '2000-09-6'
        and wsr_web_site_sk = web_site_sk
  GROUP BY web_site_id)
  SELECT channel,
