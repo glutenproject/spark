@@ -27,6 +27,7 @@ import org.apache.spark.sql.execution.datasources.PruneFileSourcePartitions
 import org.apache.spark.sql.execution.datasources.SchemaPruning
 import org.apache.spark.sql.execution.datasources.v2.{GroupBasedRowLevelOperationScanPlanning, OptimizeMetadataOnlyDeleteFromTable, V2ScanPartitioning, V2ScanRelationPushDown, V2Writes}
 import org.apache.spark.sql.execution.dynamicpruning.{CleanupDynamicPruningFilters, PartitionPruning}
+import org.apache.spark.sql.execution.merge.MergeScalarSubqueries
 import org.apache.spark.sql.execution.python.{ExtractGroupingPythonUDFFromAggregate, ExtractPythonUDFFromAggregate, ExtractPythonUDFs}
 
 class SparkOptimizer(
@@ -54,8 +55,6 @@ class SparkOptimizer(
     Batch("InjectRuntimeFilter", FixedPoint(1),
       InjectRuntimeFilter,
       RewritePredicateSubquery) :+
-    Batch("MergeScalarSubqueries", Once,
-      MergeScalarSubqueries) :+
     Batch("Pushdown Filters from PartitionPruning", fixedPoint,
       PushDownPredicates) :+
     Batch("Cleanup filters that cannot be pushed down", Once,
@@ -80,6 +79,9 @@ class SparkOptimizer(
       RemoveNoopOperators) :+
     Batch("Insert window group limit", Once, InsertWindowGroupLimit) :+
     Batch("User Provided Optimizers", fixedPoint, experimentalMethods.extraOptimizations: _*) :+
+    Batch("Merge Scalar Subqueries", Once,
+      MergeScalarSubqueries,
+      RewriteDistinctAggregates) :+
     Batch("Replace CTE with Repartition", Once, ReplaceCTERefWithRepartition)
 
   override def nonExcludableRules: Seq[String] = super.nonExcludableRules :+
