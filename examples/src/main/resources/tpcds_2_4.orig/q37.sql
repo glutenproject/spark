@@ -5,7 +5,7 @@
  where i_current_price between 68 and 68 + 30
    and inv_item_sk = i_item_sk
    and d_date_sk=inv_date_sk
-   and d_date between cast('2000-02-01' as date) and (cast('2000-02-01' as date) + interval '60' day)
+   and d_date between '2000-02-01'  and '2000-04-02'
    and i_manufact_id in (677,940,694,808)
    and inv_quantity_on_hand between 100 and 500
    and cs_item_sk = i_item_sk
