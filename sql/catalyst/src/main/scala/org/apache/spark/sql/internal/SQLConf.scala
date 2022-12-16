@@ -2455,6 +2455,18 @@ object SQLConf {
       .intConf
       .createWithDefault(SHUFFLE_SPILL_NUM_ELEMENTS_FORCE_SPILL_THRESHOLD.defaultValue.get)
 
+  val WINDOW_GROUP_LIMIT_THRESHOLD =
+    buildConf("spark.sql.optimizer.windowGroupLimitThreshold")
+      .internal()
+      .doc("Threshold for filter the dataset by the window group limit before" +
+        " window-based top-k computation. By setting this value to -1 window group limit can be" +
+        " disabled.")
+      .version("3.4.0")
+      .intConf
+      .checkValue(_ >= -1,
+        "The threshold of window group limit must be -1, 0 or positive integer.")
+      .createWithDefault(1000)
+
   val SESSION_WINDOW_BUFFER_IN_MEMORY_THRESHOLD =
     buildConf("spark.sql.sessionWindow.buffer.in.memory.threshold")
       .internal()
@@ -3767,6 +3779,15 @@ object SQLConf {
       .booleanConf
       .createWithDefault(false)
 
+  val PLAN_MERGE_IGNORE_PUSHED_PUSHED_DATA_FILTERS =
+    buildConf("spark.sql.planMerge.ignorePushedDataFilters")
+      .internal()
+      .doc(s"When set to true plan merging is enabled even if physical scan operations have " +
+        "different data filters pushed down.")
+      .version("3.4.0")
+      .booleanConf
+      .createWithDefault(true)
+
   /**
    * Holds information about keys that have been deprecated.
    *
@@ -4313,6 +4334,8 @@ class SQLConf extends Serializable with Logging {
   def windowExecBufferInMemoryThreshold: Int = getConf(WINDOW_EXEC_BUFFER_IN_MEMORY_THRESHOLD)
 
   def windowExecBufferSpillThreshold: Int = getConf(WINDOW_EXEC_BUFFER_SPILL_THRESHOLD)
+
+  def windowGroupLimitThreshold: Int = getConf(WINDOW_GROUP_LIMIT_THRESHOLD)
 
   def sessionWindowBufferInMemoryThreshold: Int = getConf(SESSION_WINDOW_BUFFER_IN_MEMORY_THRESHOLD)
 
