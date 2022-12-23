@@ -4014,6 +4014,15 @@ object SQLConf {
     .checkValues(ErrorMessageFormat.values.map(_.toString))
     .createWithDefault(ErrorMessageFormat.PRETTY.toString)
 
+  val PLAN_MERGE_IGNORE_PUSHED_PUSHED_DATA_FILTERS =
+    buildConf("spark.sql.planMerge.ignorePushedDataFilters")
+      .internal()
+      .doc(s"When set to true plan merging is enabled even if physical scan operations have " +
+        "different data filters pushed down.")
+      .version("3.4.0")
+      .booleanConf
+      .createWithDefault(true)
+
   /**
    * Holds information about keys that have been deprecated.
    *
