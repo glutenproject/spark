@@ -298,7 +298,7 @@ class V2ExpressionBuilder(e: Expression, isPredicate: Boolean = false) {
         case PushableExpression(expr) => Some(new Count(expr, isDistinct))
         case _ => None
       }
-    case aggregate.Sum(PushableExpression(expr), _) => Some(new Sum(expr, isDistinct))
+    case aggregate.Sum(PushableExpression(expr), _, None) => Some(new Sum(expr, isDistinct))
     case aggregate.Average(PushableExpression(expr), _) => Some(new Avg(expr, isDistinct))
     case aggregate.VariancePop(PushableExpression(expr), _) =>
       Some(new GeneralAggregateFunc("VAR_POP", isDistinct, Array(expr)))

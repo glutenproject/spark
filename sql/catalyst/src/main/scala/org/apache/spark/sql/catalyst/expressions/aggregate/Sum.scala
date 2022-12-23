@@ -42,7 +42,8 @@ import org.apache.spark.sql.types._
   since = "1.0.0")
 case class Sum(
     child: Expression,
-    evalMode: EvalMode.Value = EvalMode.fromSQLConf(SQLConf.get))
+    evalMode: EvalMode.Value = EvalMode.fromSQLConf(SQLConf.get),
+    resultDataType: Option[DataType] = None)
   extends DeclarativeAggregate
   with ImplicitCastInputTypes
   with UnaryLike[Expression]
@@ -71,13 +72,15 @@ case class Sum(
 
   final override val nodePatterns: Seq[TreePattern] = Seq(SUM)
 
-  private lazy val resultType = child.dataType match {
-    case DecimalType.Fixed(precision, scale) =>
-      DecimalType.bounded(precision + 10, scale)
-    case _: IntegralType => LongType
-    case it: YearMonthIntervalType => it
-    case it: DayTimeIntervalType => it
-    case _ => DoubleType
+  protected lazy val resultType = resultDataType.getOrElse {
+    child.dataType match {
+      case DecimalType.Fixed(precision, scale) =>
+        DecimalType.bounded(precision + 10, scale)
+      case _: IntegralType => LongType
+      case it: YearMonthIntervalType => it
+      case it: DayTimeIntervalType => it
+      case _ => DoubleType
+    }
   }
 
   private lazy val sum = AttributeReference("sum", resultType)()
