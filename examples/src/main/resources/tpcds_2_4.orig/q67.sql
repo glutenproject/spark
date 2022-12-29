@@ -13,7 +13,7 @@
            and d_month_seq between 1200 and 1200+11
         group by rollup(i_category, i_class, i_brand, i_product_name, d_year, d_qoy,
                         d_moy,s_store_id))dw1) dw2
- where rk <= 100000
+ where rk <= 1000000
  order by
    i_category, i_class, i_brand, i_product_name, d_year,
    d_qoy, d_moy, s_store_id, sumsales, rk
