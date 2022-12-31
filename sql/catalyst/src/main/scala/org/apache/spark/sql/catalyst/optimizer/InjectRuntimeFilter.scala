@@ -144,15 +144,15 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
           predicateReference ++ condition.references,
           hasHitFilter = true,
           hasHitSelectiveFilter = hasHitSelectiveFilter || isLikelySelective(condition))
-      // case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, _, _, left, right, _)
-      //   if canPruneLeft(joinType) =>
-      //   if (leftKeys.contains(filterCreationSideExp)) {
-      //     isSelective(left, predicateReference, hasHitFilter, hasHitSelectiveFilter)
-      //   } else if (rightKeys.contains(filterCreationSideExp)) {
-      //     isSelective(right, predicateReference, hasHitFilter, hasHitSelectiveFilter)
-      //   } else {
-      //     false
-      //   }
+       case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, _, _, left, right, _)
+         if canPruneLeft(joinType) =>
+         if (leftKeys.contains(filterCreationSideExp)) {
+           isSelective(left, predicateReference, hasHitFilter, hasHitSelectiveFilter)
+         } else if (rightKeys.contains(filterCreationSideExp)) {
+           isSelective(right, predicateReference, hasHitFilter, hasHitSelectiveFilter)
+         } else {
+           false
+         }
       case _: LeafNode => hasHitSelectiveFilter
       case _ => false
     }
@@ -170,16 +170,16 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
       filterCreationSideExp: Expression,
       filterCreationSidePlan: LogicalPlan): LogicalPlan = {
     var selected = filterCreationSidePlan
-    // filterCreationSidePlan.collect {
-    //   case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, _, _, left, right, _)
-    //     if canPruneLeft(joinType) =>
-    //     if (leftKeys.contains(filterCreationSideExp)) {
-    //       selected = confirmFilterCreationSidePlan(filterCreationSideExp, left)
-    //     }
-    //     if (rightKeys.contains(filterCreationSideExp)) {
-    //       selected = confirmFilterCreationSidePlan(filterCreationSideExp, right)
-    //     }
-    // }
+     filterCreationSidePlan.collect {
+       case ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, _, _, left, right, _)
+         if canPruneLeft(joinType) =>
+         if (leftKeys.contains(filterCreationSideExp)) {
+           selected = confirmFilterCreationSidePlan(filterCreationSideExp, left)
+         }
+         if (rightKeys.contains(filterCreationSideExp)) {
+           selected = confirmFilterCreationSidePlan(filterCreationSideExp, right)
+         }
+     }
     selected
   }
 
