@@ -24,7 +24,6 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.BloomFilterAggregate
 import org.apache.spark.sql.catalyst.planning.ExtractEquiJoinKeys
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.catalyst.trees.TreePattern.{INVOKE, JSON_TO_STRUCT, LIKE_FAMLIY, PYTHON_UDF, REGEXP_EXTRACT_FAMILY, REGEXP_REPLACE, SCALA_UDF}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -177,11 +176,6 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     } else {
       None
     }
-  }
-
-  private def isSimpleExpression(e: Expression): Boolean = {
-    !e.containsAnyPattern(PYTHON_UDF, SCALA_UDF, INVOKE, JSON_TO_STRUCT, LIKE_FAMLIY,
-      REGEXP_EXTRACT_FAMILY, REGEXP_REPLACE)
   }
 
   private def isProbablyShuffleJoin(left: LogicalPlan,

@@ -170,7 +170,7 @@ abstract class TypeCoercionBase {
    * Type coercion rule that combines multiple type coercion rules and applies them in a single tree
    * traversal.
    */
-  class CombinedTypeCoercionRule(rules: Seq[TypeCoercionRule]) extends TypeCoercionRule {
+  class CombinedTypeCoercionRule(val rules: Seq[TypeCoercionRule]) extends TypeCoercionRule {
     override def transform: PartialFunction[Expression, Expression] = {
       val transforms = rules.map(_.transform)
       Function.unlift { e: Expression =>
@@ -423,7 +423,7 @@ abstract class TypeCoercionBase {
         m.copy(newKeys.zip(newValues).flatMap { case (k, v) => Seq(k, v) })
 
       // Hive lets you do aggregation of timestamps... for some reason
-      case Sum(e @ TimestampType(), _) => Sum(Cast(e, DoubleType))
+      case Sum(e @ TimestampType(), _, _) => Sum(Cast(e, DoubleType))
       case Average(e @ TimestampType(), _) => Average(Cast(e, DoubleType))
 
       // Coalesce should return the first non-null value, which could be any column
