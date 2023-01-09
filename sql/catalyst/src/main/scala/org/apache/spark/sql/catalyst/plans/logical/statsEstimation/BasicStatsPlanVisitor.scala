@@ -39,8 +39,13 @@ object BasicStatsPlanVisitor extends LogicalPlanVisitor[Statistics] {
       Statistics(sizeInBytes = stats.map(_.sizeInBytes).filter(_ > 0L).product, rowCount = rowCount)
   }
 
-  override def visitAggregate(p: Aggregate): Statistics = {
-    AggregateEstimation.estimate(p).getOrElse(fallback(p))
+  override def visitAggregate(p: AggregateBase): Statistics = {
+    p match {
+      case _: PartialAggregate =>
+        p.child.stats
+      case _ =>
+        AggregateEstimation.estimate(p).getOrElse(fallback(p))
+    }
   }
 
   override def visitDistinct(p: Distinct): Statistics = {
