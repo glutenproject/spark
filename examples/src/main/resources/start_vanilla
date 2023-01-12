@@ -27,12 +27,13 @@ THRIFTSERVER_CONFIG="--name ${runname}
 --conf spark.sql.broadcastTimeout=300 
 --conf spark.driver.maxResultSize=20g 
 --conf spark.sql.shuffle.partitions=432
+--conf spark.sql.optimizer.runtime.bloomFilter.applicationSideScanSizeThreshold=0
 --conf spark.sql.optimizer.runtime.bloomFilter.enabled=true
 --conf spark.sql.optimizer.runtimeFilter.semiJoinReduction.enabled=true
---conf spark.sql.optimizer.windowGroupLimitThreshold=-1
---conf spark.sql.planMerge.ignorePushedDataFilters=false
---conf spark.sql.optimizer.partialAggregationOptimization.enabled=false
---conf spark.sql.aggregate.adaptivePartialAggregationThreshold=0"
+--conf spark.sql.optimizer.windowGroupLimitThreshold=1000
+--conf spark.sql.planMerge.ignorePushedDataFilters=true
+--conf spark.sql.optimizer.partialAggregationOptimization.enabled=true
+--conf spark.sql.aggregate.adaptivePartialAggregationThreshold=60000"
 
 $THRIFTSERVER_START_CMD $THRIFTSERVER_CONFIG
 
