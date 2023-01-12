@@ -108,6 +108,7 @@ object RuleIdCollection {
       "org.apache.spark.sql.catalyst.optimizer.ConvertToLocalRelation" ::
       "org.apache.spark.sql.catalyst.optimizer.CostBasedJoinReorder" ::
       "org.apache.spark.sql.catalyst.optimizer.DecimalAggregates" ::
+      "org.apache.spark.sql.catalyst.optimizer.DeduplicateRightSideOfLeftSemiAntiJoin" ::
       "org.apache.spark.sql.catalyst.optimizer.EliminateAggregateFilter" ::
       "org.apache.spark.sql.catalyst.optimizer.EliminateLimits" ::
       "org.apache.spark.sql.catalyst.optimizer.EliminateMapObjects" ::
@@ -133,6 +134,7 @@ object RuleIdCollection {
       "org.apache.spark.sql.catalyst.optimizer.PushExtraPredicateThroughJoin" ::
       "org.apache.spark.sql.catalyst.optimizer.PushFoldableIntoBranches" ::
       "org.apache.spark.sql.catalyst.optimizer.PushLeftSemiLeftAntiThroughJoin" ::
+      "org.apache.spark.sql.catalyst.optimizer.PushPartialAggregationThroughJoin" ::
       "org.apache.spark.sql.catalyst.optimizer.ReassignLambdaVariableID" ::
       "org.apache.spark.sql.catalyst.optimizer.RemoveDispensableExpressions" ::
       "org.apache.spark.sql.catalyst.optimizer.RemoveLiteralFromGroupExpressions" ::
