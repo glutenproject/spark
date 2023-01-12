@@ -824,6 +824,28 @@ object SQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val PARTIAL_AGGREGATION_OPTIMIZATION_ENABLED =
+    buildConf("spark.sql.optimizer.partialAggregationOptimization.enabled")
+    .internal()
+    .doc("When true, the query optimizer will introduce partial aggregations to optimize query. " +
+      "This optimization applies to: " +
+      "1. Push down partial sum, count, avg, min, max, first and last through inner join " +
+      "2. Partial deduplicate the children of join if the aggregation itself is group only " +
+      "3. Partial deduplicate the right side of left semi/anti join.")
+    .version("3.4.0")
+    .booleanConf
+    .createWithDefault(false)
+
+  val PARTIAL_AGGREGATION_OPTIMIZATION_BENEFIT_RATIO =
+    buildConf("spark.sql.optimizer.partialAggregationOptimization.benefitRatio")
+      .internal()
+      .doc("The reduction ratio lower than this config will introduce partial aggregations " +
+        "before join.")
+      .version("3.4.0")
+      .doubleConf
+      .checkValue(r => r >= 0 && r <= 1.0, "The benefit ratio must be positive number.")
+      .createWithDefault(0.3)
+
   val ESCAPED_STRING_LITERALS = buildConf("spark.sql.parser.escapedStringLiterals")
     .internal()
     .doc("When true, string literals (including regex patterns) remain escaped in our SQL " +
@@ -3045,6 +3067,18 @@ object SQLConf {
       .checkValue(bit => bit >= 10 && bit <= 30, "The bit value must be in [10, 30].")
       .createWithDefault(16)
 
+  val ADAPTIVE_PARTIAL_AGGREGATION_THRESHOLD =
+    buildConf("spark.sql.aggregate.adaptivePartialAggregationThreshold")
+      .internal()
+      .doc("Minimum number of processed rows before partial aggregation can be skipped. " +
+        "By setting this value to 0 adaptive partial aggregation can be disabled.")
+      .version("3.3.0")
+      .intConf
+      .checkValue(threshold => threshold >= 0 && threshold < (1 << 16),
+        "The threshold value must be bigger than or equal to 0 and less than " +
+          s"1 << ${FAST_HASH_AGGREGATE_MAX_ROWS_CAPACITY_BIT.key}.")
+      .createWithDefault(60000)
+
   val AVRO_COMPRESSION_CODEC = buildConf("spark.sql.avro.compression.codec")
     .doc("Compression codec used in writing of AVRO files. Supported codecs: " +
       "uncompressed, deflate, snappy, bzip2, xz and zstandard. Default codec is snappy.")
@@ -4141,6 +4175,12 @@ class SQLConf extends Serializable with Logging {
 
   def constraintPropagationEnabled: Boolean = getConf(CONSTRAINT_PROPAGATION_ENABLED)
 
+  def partialAggregationOptimizationEnabled: Boolean =
+    getConf(PARTIAL_AGGREGATION_OPTIMIZATION_ENABLED)
+
+  def partialAggregationOptimizationBenefitRatio: Double =
+    getConf(PARTIAL_AGGREGATION_OPTIMIZATION_BENEFIT_RATIO)
+
   def escapedStringLiterals: Boolean = getConf(ESCAPED_STRING_LITERALS)
 
   def fileCompressionFactor: Double = getConf(FILE_COMPRESSION_FACTOR)
@@ -4155,6 +4195,8 @@ class SQLConf extends Serializable with Logging {
 
   def streamingSessionWindowMergeSessionInLocalPartition: Boolean =
     getConf(STREAMING_SESSION_WINDOW_MERGE_SESSIONS_IN_LOCAL_PARTITION)
+
+  def adaptivePartialAggregationThreshold: Int = getConf(ADAPTIVE_PARTIAL_AGGREGATION_THRESHOLD)
 
   def datetimeJava8ApiEnabled: Boolean = getConf(DATETIME_JAVA8API_ENABLED)
 
