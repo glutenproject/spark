@@ -416,7 +416,7 @@ Results [9]: [null AS i_category#116, null AS i_class#117, null AS i_brand#118, 
 
 (66) Sort [codegen id : 81]
 Input [9]: [i_category#16, i_class#15, i_brand#14, i_product_name#17, d_year#8, d_qoy#10, d_moy#9, s_store_id#12, sumsales#23]
-Arguments: [i_category#16 ASC NULLS FIRST, sumsales#23 DESC NULLS LAST], false, 0
+Arguments: [sumsales#23 DESC NULLS LAST], false, 0
 
 (67) WindowGroupLimit
 Input [9]: [i_category#16, i_class#15, i_brand#14, i_product_name#17, d_year#8, d_qoy#10, d_moy#9, s_store_id#12, sumsales#23]

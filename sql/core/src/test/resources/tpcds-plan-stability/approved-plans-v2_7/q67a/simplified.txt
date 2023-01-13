@@ -10,7 +10,7 @@ TakeOrderedAndProject [i_category,i_class,i_brand,i_product_name,d_year,d_qoy,d_
                   Exchange [i_category] #1
                     WindowGroupLimit [i_category,sumsales]
                       WholeStageCodegen (54)
-                        Sort [i_category,sumsales]
+                        Sort [sumsales]
                           InputAdapter
                             Union
                               WholeStageCodegen (5)
