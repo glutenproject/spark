@@ -241,7 +241,7 @@ case class SimpleHashTableIterator(
       currentRank = rankInfo._3
       increaseRank()
       groupToRankInfo(nextGroup) = (count, rank, currentRank)
-    } while (rank >= limit && input.hasNext)
+    } while (rank > limit && input.hasNext)
 
     nextRow
   }
@@ -268,7 +268,7 @@ case class SimpleHashTableIterator(
       currentRank = rankInfo._2
       increaseRank()
       groupToRankInfo(nextGroup) = (rank, currentRank)
-    } while (rank >= limit && input.hasNext)
+    } while (rank > limit && input.hasNext)
 
     nextRow
   }
