@@ -210,17 +210,17 @@ case class SimpleHashTableIterator(
     override val limit: Int)
   extends SimpleIterator(output, input, limit) with PartitionSpecProvider {
 
-  val groupToRank = mutable.HashMap.empty[Seq[AnyRef], Int]
+  val groupToRank = mutable.HashMap.empty[UnsafeRow, Int]
 
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
     do {
       nextRow = input.next().asInstanceOf[UnsafeRow]
-      val groupValues = getGroupValues(nextRow)
-      rank = groupToRank.getOrElse(groupValues, 0)
+      val groupKey = grouping(nextRow).copy()
+      rank = groupToRank.getOrElse(groupKey, 0)
       increaseRank()
-      groupToRank(groupValues) = rank
+      groupToRank(groupKey) = rank
     } while (rank > limit && input.hasNext)
 
     nextRow
@@ -235,20 +235,20 @@ case class SimpleHashTableIterator(
     override val limit: Int)
   extends RankIterator(output, input, orderSpec, limit) with PartitionSpecProvider {
 
-  val groupToRankInfo = mutable.HashMap.empty[Seq[AnyRef], (Int, Int, UnsafeRow)]
+  val groupToRankInfo = mutable.HashMap.empty[UnsafeRow, (Int, Int, UnsafeRow)]
 
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
     do {
       nextRow = input.next().asInstanceOf[UnsafeRow]
-      val groupValues = getGroupValues(nextRow)
-      val rankInfo = groupToRankInfo.getOrElse(groupValues, (0, 0, null))
+      val groupKey = grouping(nextRow).copy()
+      val rankInfo = groupToRankInfo.getOrElse(groupKey, (0, 0, null))
       count = rankInfo._1
       rank = rankInfo._2
       currentRank = rankInfo._3
       increaseRank()
-      groupToRankInfo(groupValues) = (count, rank, currentRank)
+      groupToRankInfo(groupKey) = (count, rank, currentRank)
     } while (rank > limit && input.hasNext)
 
     nextRow
@@ -263,19 +263,19 @@ case class SimpleHashTableIterator(
     override val limit: Int)
   extends DenseRankIterator(output, input, orderSpec, limit) with PartitionSpecProvider {
 
-  val groupToRankInfo = mutable.HashMap.empty[Seq[AnyRef], (Int, UnsafeRow)]
+  val groupToRankInfo = mutable.HashMap.empty[UnsafeRow, (Int, UnsafeRow)]
 
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
     do {
       nextRow = input.next().asInstanceOf[UnsafeRow]
-      val groupValues = getGroupValues(nextRow)
-      val rankInfo = groupToRankInfo.getOrElse(groupValues, (0, null))
+      val groupKey = grouping(nextRow).copy()
+      val rankInfo = groupToRankInfo.getOrElse(groupKey, (0, null))
       rank = rankInfo._1
       currentRank = rankInfo._2
       increaseRank()
-      groupToRankInfo(groupValues) = (rank, currentRank)
+      groupToRankInfo(groupKey) = (rank, currentRank)
     } while (rank > limit && input.hasNext)
 
     nextRow
