@@ -202,14 +202,14 @@ case class SimpleHashTableIterator(
     override val limit: Int)
   extends SimpleIterator(output, input, limit) with PartitionSpecProvider {
 
-  val groupToRank = mutable.HashMap.empty[UnsafeRow, Int]
+  val groupToRank = mutable.HashMap.empty[Int, Int]
 
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
     do {
       nextRow = input.next().asInstanceOf[UnsafeRow]
-      val groupKey = grouping(nextRow).copy()
+      val groupKey = grouping(nextRow).hashCode()
       rank = groupToRank.getOrElse(groupKey, 0)
       increaseRank()
       groupToRank(groupKey) = rank
@@ -227,14 +227,14 @@ case class SimpleHashTableIterator(
     override val limit: Int)
   extends RankIterator(output, input, orderSpec, limit) with PartitionSpecProvider {
 
-  val groupToRankInfo = mutable.HashMap.empty[UnsafeRow, (Int, Int, UnsafeRow)]
+  val groupToRankInfo = mutable.HashMap.empty[Int, (Int, Int, UnsafeRow)]
 
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
     do {
       nextRow = input.next().asInstanceOf[UnsafeRow]
-      val groupKey = grouping(nextRow).copy()
+      val groupKey = grouping(nextRow).hashCode()
       val rankInfo = groupToRankInfo.getOrElse(groupKey, (0, 0, null))
       count = rankInfo._1
       rank = rankInfo._2
@@ -255,14 +255,14 @@ case class SimpleHashTableIterator(
     override val limit: Int)
   extends DenseRankIterator(output, input, orderSpec, limit) with PartitionSpecProvider {
 
-  val groupToRankInfo = mutable.HashMap.empty[UnsafeRow, (Int, UnsafeRow)]
+  val groupToRankInfo = mutable.HashMap.empty[Int, (Int, UnsafeRow)]
 
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
     do {
       nextRow = input.next().asInstanceOf[UnsafeRow]
-      val groupKey = grouping(nextRow).copy()
+      val groupKey = grouping(nextRow).hashCode()
       val rankInfo = groupToRankInfo.getOrElse(groupKey, (0, null))
       rank = rankInfo._1
       currentRank = rankInfo._2
