@@ -2590,7 +2590,7 @@ object SQLConf {
       .intConf
       .checkValue(_ >= -1,
         "The threshold of window group limit must be -1, 0 or positive integer.")
-      .createWithDefault(1000)
+      .createWithDefault(10000)
 
   val SESSION_WINDOW_BUFFER_IN_MEMORY_THRESHOLD =
     buildConf("spark.sql.sessionWindow.buffer.in.memory.threshold")
