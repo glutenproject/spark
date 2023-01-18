@@ -18,13 +18,13 @@
 package org.apache.spark.sql.execution.window
 
 import scala.collection.mutable
-
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, DenseRank, Expression, Rank, RowNumber, SortOrder, UnsafeProjection, UnsafeRow}
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateOrdering
 import org.apache.spark.sql.catalyst.plans.physical.{AllTuples, ClusteredDistribution, Distribution, Partitioning}
 import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
+import org.apache.spark.sql.internal.SQLConf
 
 sealed trait WindowGroupLimitMode
 
@@ -193,6 +193,8 @@ trait PartitionSpecProvider {
   def output: Seq[Attribute]
 
   protected val grouping = UnsafeProjection.create(partitionSpec, output)
+
+  protected val hashTableSize = SQLConf.get.windowGroupLimitHashTableSize
 }
 
 case class SimpleHashTableIterator(
@@ -207,13 +209,17 @@ case class SimpleHashTableIterator(
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
-    do {
+    if (groupToRank.size > hashTableSize) {
       nextRow = input.next().asInstanceOf[UnsafeRow]
-      val groupKey = grouping(nextRow).hashCode()
-      rank = groupToRank.getOrElse(groupKey, 0)
-      increaseRank()
-      groupToRank(groupKey) = rank
-    } while (rank > limit && input.hasNext)
+    } else {
+      do {
+        nextRow = input.next().asInstanceOf[UnsafeRow]
+        val groupKey = grouping(nextRow).hashCode()
+        rank = groupToRank.getOrElse(groupKey, 0)
+        increaseRank()
+        groupToRank(groupKey) = rank
+      } while (rank > limit && input.hasNext)
+    }
 
     nextRow
   }
@@ -232,16 +238,20 @@ case class SimpleHashTableIterator(
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
-    do {
+    if (groupToRankInfo.size > hashTableSize) {
       nextRow = input.next().asInstanceOf[UnsafeRow]
-      val groupKey = grouping(nextRow).hashCode()
-      val rankInfo = groupToRankInfo.getOrElse(groupKey, (0, 0, null))
-      count = rankInfo._1
-      rank = rankInfo._2
-      currentRank = rankInfo._3
-      increaseRank()
-      groupToRankInfo(groupKey) = (count, rank, currentRank)
-    } while (rank > limit && input.hasNext)
+    } else {
+      do {
+        nextRow = input.next().asInstanceOf[UnsafeRow]
+        val groupKey = grouping(nextRow).hashCode()
+        val rankInfo = groupToRankInfo.getOrElse(groupKey, (0, 0, null))
+        count = rankInfo._1
+        rank = rankInfo._2
+        currentRank = rankInfo._3
+        increaseRank()
+        groupToRankInfo(groupKey) = (count, rank, currentRank)
+      } while (rank > limit && input.hasNext)
+    }
 
     nextRow
   }
@@ -260,15 +270,19 @@ case class SimpleHashTableIterator(
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
-    do {
+    if (groupToRankInfo.size > hashTableSize) {
       nextRow = input.next().asInstanceOf[UnsafeRow]
-      val groupKey = grouping(nextRow).hashCode()
-      val rankInfo = groupToRankInfo.getOrElse(groupKey, (0, null))
-      rank = rankInfo._1
-      currentRank = rankInfo._2
-      increaseRank()
-      groupToRankInfo(groupKey) = (rank, currentRank)
-    } while (rank > limit && input.hasNext)
+    } else {
+      do {
+        nextRow = input.next().asInstanceOf[UnsafeRow]
+        val groupKey = grouping(nextRow).hashCode()
+        val rankInfo = groupToRankInfo.getOrElse(groupKey, (0, null))
+        rank = rankInfo._1
+        currentRank = rankInfo._2
+        increaseRank()
+        groupToRankInfo(groupKey) = (rank, currentRank)
+      } while (rank > limit && input.hasNext)
+    }
 
     nextRow
   }
