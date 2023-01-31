@@ -18,6 +18,7 @@
 package org.apache.spark.sql.execution.window
 
 import scala.collection.mutable
+
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, DenseRank, Expression, Rank, RowNumber, SortOrder, UnsafeProjection, UnsafeRow}
@@ -225,7 +226,7 @@ case class SimpleHashTableIterator(
   }
 }
 
- case class RankHashTableIterator(
+case class RankHashTableIterator(
     partitionSpec: Seq[Expression],
     override val output: Seq[Attribute],
     override val input: Iterator[InternalRow],
@@ -233,7 +234,19 @@ case class SimpleHashTableIterator(
     override val limit: Int)
   extends RankIterator(output, input, orderSpec, limit) with PartitionSpecProvider {
 
-  val groupToRankInfo = mutable.HashMap.empty[Int, (Int, Int, UnsafeRow)]
+  case class StateInfo(
+      var count: Int = 0,
+      var rank: Int = 0,
+      var currentRank: UnsafeRow = null) {
+
+    def update(newCount: Int, newRank: Int, newCurrentRank: UnsafeRow): Unit = {
+      count = newCount
+      rank = newRank
+      currentRank = newCurrentRank
+    }
+  }
+
+  val groupToRankInfo = mutable.HashMap.empty[Int, StateInfo]
 
   override def hasNext: Boolean = input.hasNext
 
@@ -244,20 +257,20 @@ case class SimpleHashTableIterator(
       do {
         nextRow = input.next().asInstanceOf[UnsafeRow]
         val groupKey = grouping(nextRow).hashCode()
-        val rankInfo = groupToRankInfo.getOrElse(groupKey, (0, 0, null))
-        count = rankInfo._1
-        rank = rankInfo._2
-        currentRank = rankInfo._3
+        val stateInfo = groupToRankInfo.getOrElse(groupKey, StateInfo())
+        count = stateInfo.count
+        rank = stateInfo.rank
+        currentRank = stateInfo.currentRank
         increaseRank()
-        groupToRankInfo(groupKey) = (count, rank, currentRank)
+        stateInfo.update(count, rank, currentRank)
       } while (rank > limit && input.hasNext)
     }
 
     nextRow
   }
- }
+}
 
- case class DenseRankHashTableIterator(
+case class DenseRankHashTableIterator(
     partitionSpec: Seq[Expression],
     override val output: Seq[Attribute],
     override val input: Iterator[InternalRow],
@@ -286,7 +299,7 @@ case class SimpleHashTableIterator(
 
     nextRow
   }
- }
+}
 
 trait WindowIterator extends BaseIterator with PartitionSpecProvider {
 
