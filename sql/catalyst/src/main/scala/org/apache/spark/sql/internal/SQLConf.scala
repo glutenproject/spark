@@ -2601,7 +2601,7 @@ object SQLConf {
       .intConf
       .checkValue(_ > 0, "The size of hash table that cache the mapping relationship between" +
         " grouping key and rank value must be positive integer.")
-      .createWithDefault(50000)
+      .createWithDefault(30000)
 
   val SESSION_WINDOW_BUFFER_IN_MEMORY_THRESHOLD =
     buildConf("spark.sql.sessionWindow.buffer.in.memory.threshold")
