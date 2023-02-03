@@ -196,6 +196,8 @@ trait PartitionSpecProvider {
   protected val grouping = UnsafeProjection.create(partitionSpec, output)
 
   protected val hashTableSize = SQLConf.get.windowGroupLimitHashTableSize
+
+  protected var abort = false
 }
 
 case class SimpleHashTableIterator(
@@ -210,16 +212,20 @@ case class SimpleHashTableIterator(
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
-    if (groupToRank.size > hashTableSize) {
+    if (abort) {
       nextRow = input.next().asInstanceOf[UnsafeRow]
     } else {
       do {
         nextRow = input.next().asInstanceOf[UnsafeRow]
-        val groupKey = grouping(nextRow).hashCode()
-        rank = groupToRank.getOrElse(groupKey, 0)
-        increaseRank()
-        groupToRank(groupKey) = rank
-      } while (rank > limit && input.hasNext)
+        if (groupToRank.size > hashTableSize) {
+          abort = true
+        } else {
+          val groupKey = grouping(nextRow).hashCode()
+          rank = groupToRank.getOrElse(groupKey, 0)
+          increaseRank()
+          groupToRank(groupKey) = rank
+        }
+      } while (!abort && rank > limit && input.hasNext)
     }
 
     nextRow
@@ -251,19 +257,23 @@ case class RankHashTableIterator(
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
-    if (groupToRankInfo.size > hashTableSize) {
+    if (abort) {
       nextRow = input.next().asInstanceOf[UnsafeRow]
     } else {
       do {
         nextRow = input.next().asInstanceOf[UnsafeRow]
-        val groupKey = grouping(nextRow).hashCode()
-        val stateInfo = groupToRankInfo.getOrElse(groupKey, StateInfo())
-        count = stateInfo.count
-        rank = stateInfo.rank
-        currentRank = stateInfo.currentRank
-        increaseRank()
-        stateInfo.update(count, rank, currentRank)
-      } while (rank > limit && input.hasNext)
+        if (groupToRankInfo.size > hashTableSize) {
+          abort = true
+        } else {
+          val groupKey = grouping(nextRow).hashCode()
+          val stateInfo = groupToRankInfo.getOrElse(groupKey, StateInfo())
+          count = stateInfo.count
+          rank = stateInfo.rank
+          currentRank = stateInfo.currentRank
+          increaseRank()
+          stateInfo.update(count, rank, currentRank)
+        }
+      } while (!abort && rank > limit && input.hasNext)
     }
 
     nextRow
@@ -278,22 +288,36 @@ case class DenseRankHashTableIterator(
     override val limit: Int)
   extends DenseRankIterator(output, input, orderSpec, limit) with PartitionSpecProvider {
 
-  val groupToRankInfo = mutable.HashMap.empty[Int, (Int, UnsafeRow)]
+  case class StateInfo(
+      var rank: Int = 0,
+      var currentRank: UnsafeRow = null) {
+
+    def update(newRank: Int, newCurrentRank: UnsafeRow): Unit = {
+      rank = newRank
+      currentRank = newCurrentRank
+    }
+  }
+
+  val groupToRankInfo = mutable.HashMap.empty[Int, StateInfo]
 
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
-    if (groupToRankInfo.size > hashTableSize) {
+    if (abort) {
       nextRow = input.next().asInstanceOf[UnsafeRow]
     } else {
       do {
         nextRow = input.next().asInstanceOf[UnsafeRow]
-        val groupKey = grouping(nextRow).hashCode()
-        val rankInfo = groupToRankInfo.getOrElse(groupKey, (0, null))
-        rank = rankInfo._1
-        currentRank = rankInfo._2
-        increaseRank()
-        groupToRankInfo(groupKey) = (rank, currentRank)
+        if (groupToRankInfo.size > hashTableSize) {
+          abort = true
+        } else {
+          val groupKey = grouping(nextRow).hashCode()
+          val stateInfo = groupToRankInfo.getOrElse(groupKey, StateInfo())
+          rank = stateInfo.rank
+          currentRank = stateInfo.currentRank
+          increaseRank()
+          stateInfo.update(rank, currentRank)
+        }
       } while (rank > limit && input.hasNext)
     }
 
