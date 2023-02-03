@@ -266,7 +266,7 @@ case class RankHashTableIterator(
           abort = true
         } else {
           val groupKey = grouping(nextRow).hashCode()
-          val stateInfo = groupToRankInfo.getOrElse(groupKey, StateInfo())
+          val stateInfo = groupToRankInfo.getOrElseUpdate(groupKey, StateInfo())
           count = stateInfo.count
           rank = stateInfo.rank
           currentRank = stateInfo.currentRank
@@ -312,7 +312,7 @@ case class DenseRankHashTableIterator(
           abort = true
         } else {
           val groupKey = grouping(nextRow).hashCode()
-          val stateInfo = groupToRankInfo.getOrElse(groupKey, StateInfo())
+          val stateInfo = groupToRankInfo.getOrElseUpdate(groupKey, StateInfo())
           rank = stateInfo.rank
           currentRank = stateInfo.currentRank
           increaseRank()
