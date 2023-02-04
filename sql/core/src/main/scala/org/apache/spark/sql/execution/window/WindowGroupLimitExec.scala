@@ -223,8 +223,10 @@ case class SimpleHashTableIterator(
         if (groupToRank.size < hashTableSize) {
           val groupKey = grouping(nextRow).hashCode()
           rank = groupToRank.getOrElse(groupKey, 0)
-          increaseRank()
-          groupToRank(groupKey) = rank
+          if (rank <= limit) {
+            increaseRank()
+            groupToRank(groupKey) = rank
+          }
         } else {
           abort = true
         }
@@ -271,8 +273,10 @@ case class RankHashTableIterator(
           count = stateInfo.count
           rank = stateInfo.rank
           currentRank = stateInfo.currentRank
-          increaseRank()
-          stateInfo.update(count, rank, currentRank)
+          if (rank <= limit) {
+            increaseRank()
+            stateInfo.update(count, rank, currentRank)
+          }
         } else {
           abort = true
         }
@@ -316,12 +320,14 @@ case class DenseRankHashTableIterator(
           val stateInfo = groupToRankInfo.getOrElseUpdate(groupKey, StateInfo())
           rank = stateInfo.rank
           currentRank = stateInfo.currentRank
-          increaseRank()
-          stateInfo.update(rank, currentRank)
+          if (rank <= limit) {
+            increaseRank()
+            stateInfo.update(rank, currentRank)
+          }
         } else {
           abort = true
         }
-      } while (rank > limit && input.hasNext)
+      } while (!abort && rank > limit && input.hasNext)
     }
 
     nextRow
