@@ -60,10 +60,13 @@ case class WindowGroupLimitExec(
       }
   }
 
-  override def requiredChildOrdering: Seq[Seq[SortOrder]] = mode match {
-    case Partial => Seq(orderSpec)
-    case Final => Seq(partitionSpec.map(SortOrder(_, Ascending)) ++ orderSpec)
-  }
+  override def requiredChildOrdering: Seq[Seq[SortOrder]] =
+    Seq(partitionSpec.map(SortOrder(_, Ascending)) ++ orderSpec)
+
+//  override def requiredChildOrdering: Seq[Seq[SortOrder]] = mode match {
+//    case Partial => Seq(orderSpec)
+//    case Final => Seq(partitionSpec.map(SortOrder(_, Ascending)) ++ orderSpec)
+//  }
 
   override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
