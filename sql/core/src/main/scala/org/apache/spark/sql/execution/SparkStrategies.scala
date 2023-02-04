@@ -633,9 +633,9 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
       case logical.WindowGroupLimit(partitionSpec, orderSpec, rankLikeFunction, limit, child) =>
         val partialWindowGroupLimit = execution.window.WindowGroupLimitExec(partitionSpec,
           orderSpec, rankLikeFunction, limit, execution.window.Partial, planLater(child))
-        val finalWindowGroupLimit = execution.window.WindowGroupLimitExec(partitionSpec, orderSpec,
-          rankLikeFunction, limit, execution.window.Final, partialWindowGroupLimit)
-        finalWindowGroupLimit :: Nil
+//  val finalWindowGroupLimit = execution.window.WindowGroupLimitExec(partitionSpec, orderSpec,
+//          rankLikeFunction, limit, execution.window.Final, partialWindowGroupLimit)
+        partialWindowGroupLimit :: Nil
       case _ => Nil
     }
   }

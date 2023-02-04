@@ -72,37 +72,49 @@ case class WindowGroupLimitExec(
 
   override def outputPartitioning: Partitioning = child.outputPartitioning
 
-  protected override def doExecute(): RDD[InternalRow] = mode match {
-    case Partial =>
-      rankLikeFunction match {
-        case _: RowNumber if partitionSpec.isEmpty =>
-          child.execute().mapPartitionsInternal(new SimpleIterator(output, _, limit))
-        case _: RowNumber =>
-          child.execute().mapPartitionsInternal(
-            SimpleHashTableIterator(partitionSpec, output, _, limit))
-        case _: Rank if partitionSpec.isEmpty =>
-          child.execute().mapPartitionsInternal(new RankIterator(output, _, orderSpec, limit))
-        case _: Rank =>
-          child.execute().mapPartitionsInternal(
-            RankHashTableIterator(partitionSpec, output, _, orderSpec, limit))
-        case _: DenseRank if partitionSpec.isEmpty =>
-          child.execute().mapPartitionsInternal(new DenseRankIterator(output, _, orderSpec, limit))
-        case _: DenseRank =>
-          child.execute().mapPartitionsInternal(
-            DenseRankHashTableIterator(partitionSpec, output, _, orderSpec, limit))
-      }
-    case Final =>
-      rankLikeFunction match {
-        case _: RowNumber =>
-          child.execute().mapPartitionsInternal(
-            SimpleGroupLimitIterator(partitionSpec, output, _, limit))
-        case _: Rank =>
-          child.execute().mapPartitionsInternal(
-            RankGroupLimitIterator(partitionSpec, output, _, orderSpec, limit))
-        case _: DenseRank =>
-          child.execute().mapPartitionsInternal(
-            DenseRankGroupLimitIterator(partitionSpec, output, _, orderSpec, limit))
-      }
+//  protected override def doExecute(): RDD[InternalRow] = mode match {
+//    case Partial =>
+//      rankLikeFunction match {
+//        case _: RowNumber if partitionSpec.isEmpty =>
+//          child.execute().mapPartitionsInternal(new SimpleIterator(output, _, limit))
+//        case _: RowNumber =>
+//          child.execute().mapPartitionsInternal(
+//            SimpleHashTableIterator(partitionSpec, output, _, limit))
+//        case _: Rank if partitionSpec.isEmpty =>
+//          child.execute().mapPartitionsInternal(new RankIterator(output, _, orderSpec, limit))
+//        case _: Rank =>
+//          child.execute().mapPartitionsInternal(
+//            RankHashTableIterator(partitionSpec, output, _, orderSpec, limit))
+//        case _: DenseRank if partitionSpec.isEmpty =>
+//    child.execute().mapPartitionsInternal(new DenseRankIterator(output, _, orderSpec, limit))
+//        case _: DenseRank =>
+//          child.execute().mapPartitionsInternal(
+//            DenseRankHashTableIterator(partitionSpec, output, _, orderSpec, limit))
+//      }
+//    case Final =>
+//      rankLikeFunction match {
+//        case _: RowNumber =>
+//          child.execute().mapPartitionsInternal(
+//            SimpleGroupLimitIterator(partitionSpec, output, _, limit))
+//        case _: Rank =>
+//          child.execute().mapPartitionsInternal(
+//            RankGroupLimitIterator(partitionSpec, output, _, orderSpec, limit))
+//        case _: DenseRank =>
+//          child.execute().mapPartitionsInternal(
+//            DenseRankGroupLimitIterator(partitionSpec, output, _, orderSpec, limit))
+//      }
+//  }
+
+  protected override def doExecute(): RDD[InternalRow] = rankLikeFunction match {
+    case _: RowNumber =>
+      child.execute().mapPartitionsInternal(
+        SimpleGroupLimitIterator(partitionSpec, output, _, limit))
+    case _: Rank =>
+      child.execute().mapPartitionsInternal(
+        RankGroupLimitIterator(partitionSpec, output, _, orderSpec, limit))
+    case _: DenseRank =>
+      child.execute().mapPartitionsInternal(
+        DenseRankGroupLimitIterator(partitionSpec, output, _, orderSpec, limit))
   }
 
   override protected def withNewChildInternal(newChild: SparkPlan): WindowGroupLimitExec =
@@ -215,23 +227,24 @@ case class SimpleHashTableIterator(
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
-    if (abort) {
-      nextRow = input.next().asInstanceOf[UnsafeRow]
-    } else {
-      do {
-        nextRow = input.next().asInstanceOf[UnsafeRow]
-        if (groupToRank.size < hashTableSize) {
-          val groupKey = grouping(nextRow).hashCode()
-          rank = groupToRank.getOrElse(groupKey, 0)
-          if (rank <= limit) {
-            increaseRank()
-            groupToRank(groupKey) = rank
-          }
-        } else {
-          abort = true
-        }
-      } while (!abort && rank > limit && input.hasNext)
-    }
+//    if (abort) {
+//      nextRow = input.next().asInstanceOf[UnsafeRow]
+//    } else {
+//      do {
+//        nextRow = input.next().asInstanceOf[UnsafeRow]
+//        if (groupToRank.size < hashTableSize) {
+//          val groupKey = grouping(nextRow).hashCode()
+//          rank = groupToRank.getOrElse(groupKey, 0)
+//          if (rank <= limit) {
+//            increaseRank()
+//            groupToRank(groupKey) = rank
+//          }
+//        } else {
+//          abort = true
+//        }
+//      } while (!abort && rank > limit && input.hasNext)
+//    }
+    nextRow = input.next().asInstanceOf[UnsafeRow]
 
     nextRow
   }
@@ -246,7 +259,7 @@ case class RankHashTableIterator(
   extends RankIterator(output, input, orderSpec, limit) with PartitionSpecProvider {
 
   case class StateInfo(
-      var count: Int = 0,
+      var count: Int = 1,
       var rank: Int = 0,
       var currentRank: UnsafeRow = null) {
 
@@ -280,7 +293,7 @@ case class RankHashTableIterator(
         } else {
           abort = true
         }
-      } while (!abort && rank > limit && input.hasNext)
+      } while (rank > limit && input.hasNext && !abort)
     }
 
     nextRow
