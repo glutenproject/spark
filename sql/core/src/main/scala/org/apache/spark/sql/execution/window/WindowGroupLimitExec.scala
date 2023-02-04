@@ -257,24 +257,25 @@ case class RankHashTableIterator(
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
-    if (abort) {
-      nextRow = input.next().asInstanceOf[UnsafeRow]
-    } else {
-      do {
-        nextRow = input.next().asInstanceOf[UnsafeRow]
-        if (groupToRankInfo.size > hashTableSize) {
-          abort = true
-        } else {
-          val groupKey = grouping(nextRow).hashCode()
-          val stateInfo = groupToRankInfo.getOrElseUpdate(groupKey, StateInfo())
-          count = stateInfo.count
-          rank = stateInfo.rank
-          currentRank = stateInfo.currentRank
-          increaseRank()
-          stateInfo.update(count, rank, currentRank)
-        }
-      } while (!abort && rank > limit && input.hasNext)
-    }
+//    if (abort) {
+//      nextRow = input.next().asInstanceOf[UnsafeRow]
+//    } else {
+//      do {
+//        nextRow = input.next().asInstanceOf[UnsafeRow]
+//        if (groupToRankInfo.size < hashTableSize) {
+//          val groupKey = grouping(nextRow).hashCode()
+//          val stateInfo = groupToRankInfo.getOrElseUpdate(groupKey, StateInfo())
+//          count = stateInfo.count
+//          rank = stateInfo.rank
+//          currentRank = stateInfo.currentRank
+//          increaseRank()
+//          stateInfo.update(count, rank, currentRank)
+//        } else {
+//          abort = true
+//        }
+//      } while (!abort && rank > limit && input.hasNext)
+//    }
+    nextRow = input.next().asInstanceOf[UnsafeRow]
 
     nextRow
   }
