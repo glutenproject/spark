@@ -64,7 +64,7 @@ case class WindowGroupLimitExec(
 //    Seq(partitionSpec.map(SortOrder(_, Ascending)) ++ orderSpec)
 
   override def requiredChildOrdering: Seq[Seq[SortOrder]] = mode match {
-    case Partial => Seq(orderSpec)
+    case Partial => super.requiredChildOrdering
     case Final => Seq(partitionSpec.map(SortOrder(_, Ascending)) ++ orderSpec)
   }
 
