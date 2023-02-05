@@ -17,14 +17,18 @@
 
 package org.apache.spark.sql.execution.window
 
+import java.util.concurrent.TimeUnit.NANOSECONDS
+
 import scala.collection.mutable
 
+import org.apache.spark.{SparkEnv, TaskContext}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, DenseRank, Expression, Rank, RowNumber, SortOrder, UnsafeProjection, UnsafeRow}
-import org.apache.spark.sql.catalyst.expressions.codegen.GenerateOrdering
+import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, BindReferences, DenseRank, Expression, Rank, RowNumber, RowOrdering, SortOrder, SortPrefix, UnsafeProjection, UnsafeRow}
+import org.apache.spark.sql.catalyst.expressions.codegen.{GenerateOrdering, LazilyGeneratedOrdering}
 import org.apache.spark.sql.catalyst.plans.physical.{AllTuples, ClusteredDistribution, Distribution, Partitioning}
-import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
+import org.apache.spark.sql.execution.{ExternalAppendOnlyUnsafeRowArray, SortPrefixUtils, SparkPlan, UnaryExecNode, UnsafeExternalRowSorter}
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.internal.SQLConf
 
 sealed trait WindowGroupLimitMode
@@ -39,6 +43,8 @@ case object Final extends WindowGroupLimitMode
  * @param partitionSpec Should be the same as [[WindowExec#partitionSpec]]
  * @param orderSpec Should be the same as [[WindowExec#orderSpec]]
  * @param rankLikeFunction The function to compute row rank, should be RowNumber/Rank/DenseRank.
+ * @param testSpillFrequency Method for configuring periodic spilling in unit tests. If set, will
+ *                           spill every `frequency` records.
  */
 case class WindowGroupLimitExec(
     partitionSpec: Seq[Expression],
@@ -46,7 +52,8 @@ case class WindowGroupLimitExec(
     rankLikeFunction: Expression,
     limit: Int,
     mode: WindowGroupLimitMode,
-    child: SparkPlan) extends UnaryExecNode {
+    child: SparkPlan,
+    testSpillFrequency: Int = 0) extends UnaryExecNode {
 
   override def output: Seq[Attribute] = child.output
 
@@ -60,10 +67,8 @@ case class WindowGroupLimitExec(
       }
   }
 
-//  override def requiredChildOrdering: Seq[Seq[SortOrder]] =
-//    Seq(partitionSpec.map(SortOrder(_, Ascending)) ++ orderSpec)
-
   override def requiredChildOrdering: Seq[Seq[SortOrder]] = mode match {
+    case Partial if partitionSpec.isEmpty => Seq(orderSpec)
     case Partial => super.requiredChildOrdering
     case Final => Seq(partitionSpec.map(SortOrder(_, Ascending)) ++ orderSpec)
   }
@@ -71,6 +76,15 @@ case class WindowGroupLimitExec(
   override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
   override def outputPartitioning: Partitioning = child.outputPartitioning
+
+  private val enableRadixSort = conf.enableRadixSort
+
+  override lazy val metrics = Map(
+    "sortTime" -> SQLMetrics.createTimingMetric(sparkContext, "sort time"),
+    "peakMemory" -> SQLMetrics.createSizeMetric(sparkContext, "peak memory"),
+    "spillSize" -> SQLMetrics.createSizeMetric(sparkContext, "spill size"))
+
+  private[sql] var rowSorter: UnsafeExternalRowSorter = _
 
   protected override def doExecute(): RDD[InternalRow] = mode match {
     case Partial =>
@@ -83,8 +97,13 @@ case class WindowGroupLimitExec(
         case _: Rank if partitionSpec.isEmpty =>
           child.execute().mapPartitionsInternal(new RankIterator(output, _, orderSpec, limit))
         case _: Rank =>
+          val peakMemory = longMetric("peakMemory")
+          val spillSize = longMetric("spillSize")
+          val sortTime = longMetric("sortTime")
           child.execute().mapPartitionsInternal(
-            RankHashTableIterator(partitionSpec, output, _, orderSpec, limit))
+            createRankHashTableIterator(_, peakMemory, spillSize, sortTime))
+//          child.execute().mapPartitionsInternal(
+//            RankHashTableIterator(partitionSpec, output, _, orderSpec, limit))
         case _: DenseRank if partitionSpec.isEmpty =>
           child.execute().mapPartitionsInternal(new DenseRankIterator(output, _, orderSpec, limit))
         case _: DenseRank =>
@@ -103,6 +122,143 @@ case class WindowGroupLimitExec(
           child.execute().mapPartitionsInternal(
             DenseRankGroupLimitIterator(partitionSpec, output, _, orderSpec, limit))
       }
+  }
+
+  /**
+   * This method gets invoked only once for each SortExec instance to initialize an
+   * UnsafeExternalRowSorter, both `plan.execute` and code generation are using it.
+   * In the code generation code path, we need to call this function outside the class so we
+   * should make it public.
+   */
+  def createSorter(): UnsafeExternalRowSorter = {
+    val ordering = RowOrdering.create(orderSpec, output)
+
+    // The comparator for comparing prefix
+    val boundSortExpression = BindReferences.bindReference(orderSpec.head, output)
+    val prefixComparator = SortPrefixUtils.getPrefixComparator(boundSortExpression)
+
+    val canUseRadixSort = enableRadixSort && orderSpec.length == 1 &&
+      SortPrefixUtils.canSortFullyWithPrefix(boundSortExpression)
+
+    // The generator for prefix
+    val prefixExpr = SortPrefix(boundSortExpression)
+    val prefixProjection = UnsafeProjection.create(Seq(prefixExpr))
+    val prefixComputer = new UnsafeExternalRowSorter.PrefixComputer {
+      private val result = new UnsafeExternalRowSorter.PrefixComputer.Prefix
+      override def computePrefix(row: InternalRow):
+      UnsafeExternalRowSorter.PrefixComputer.Prefix = {
+        val prefix = prefixProjection.apply(row)
+        result.isNull = prefix.isNullAt(0)
+        result.value = if (result.isNull) prefixExpr.nullValue else prefix.getLong(0)
+        result
+      }
+    }
+
+    val pageSize = SparkEnv.get.memoryManager.pageSizeBytes
+    rowSorter = UnsafeExternalRowSorter.create(
+      schema, ordering, prefixComparator, prefixComputer, pageSize, canUseRadixSort)
+
+//    if (testSpillFrequency > 0) {
+//      rowSorter.setTestSpillFrequency(testSpillFrequency)
+//    }
+    rowSorter
+  }
+
+  private def createRankHashTableIterator(
+      stream: Iterator[InternalRow],
+      peakMemory: SQLMetric,
+      spillSize: SQLMetric,
+      sortTime: SQLMetric): Iterator[InternalRow] = {
+    val ord = new LazilyGeneratedOrdering(orderSpec, child.output)
+    val inMemoryThreshold = conf.windowExecBufferInMemoryThreshold
+    val spillThreshold = conf.windowExecBufferSpillThreshold
+    val hashTableSize = conf.windowGroupLimitHashTableSize
+
+    new Iterator[InternalRow] {
+
+      val grouping = UnsafeProjection.create(partitionSpec, child.output)
+
+      // Manage the stream and the grouping.
+      var nextRow: UnsafeRow = null
+      val groupToBuffer = mutable.HashMap.empty[Int, ExternalAppendOnlyUnsafeRowArray]
+
+      while (stream.hasNext && groupToBuffer.size < 1000) {
+        nextRow = stream.next().asInstanceOf[UnsafeRow]
+        val groupKey = grouping(nextRow).hashCode()
+        val buffer = groupToBuffer.getOrElseUpdate(groupKey,
+          new ExternalAppendOnlyUnsafeRowArray(inMemoryThreshold, spillThreshold))
+        buffer.add(nextRow)
+      }
+
+      val buffers = groupToBuffer.valuesIterator
+      var nextBuffer: ExternalAppendOnlyUnsafeRowArray = _
+      var nextBufferAvailable: Boolean = false
+      private[this] def fetchNextBuffer(): Unit = {
+        nextBufferAvailable = buffers.hasNext
+        if (nextBufferAvailable) {
+          nextBuffer = buffers.next()
+        } else {
+          nextBuffer = null
+        }
+      }
+      fetchNextBuffer()
+
+      var bufferIterator: Iterator[InternalRow] = _
+      val orderingSatisfies = SortOrder.orderingSatisfies(child.outputOrdering, orderSpec)
+      private[this] def fetchNextPartition(): Unit = {
+        bufferIterator = if (groupToBuffer.size >= 1000) {
+          nextBuffer.generateIterator()
+        } else if (orderingSatisfies) {
+          new RankIterator(output, nextBuffer.generateIterator(), orderSpec, limit)
+        } else {
+          val sorter = createSorter()
+
+          val metrics = TaskContext.get().taskMetrics()
+          // Remember spill data size of this task before execute this operator so that we can
+          // figure out how many bytes we spilled for this operator.
+          val spillSizeBefore = metrics.memoryBytesSpilled
+          val sortedIterator = sorter.sort(nextBuffer.generateIterator())
+          sortTime += NANOSECONDS.toMillis(sorter.getSortTimeNanos)
+          peakMemory += sorter.getPeakMemoryUsage
+          spillSize += metrics.memoryBytesSpilled - spillSizeBefore
+          metrics.incPeakExecutionMemory(sorter.getPeakMemoryUsage)
+          new RankIterator(output, sortedIterator, orderSpec, limit)
+
+//          val sortedIterator =
+//            Utils.sort(nextBuffer.generateIterator().asInstanceOf[Iterator[InternalRow]])(ord)
+        }
+
+        fetchNextBuffer()
+      }
+
+      override final def hasNext: Boolean = {
+        val found = (bufferIterator != null && bufferIterator.hasNext) ||
+          nextBufferAvailable || stream.hasNext
+        if (!found) {
+          buffers.foreach { buffer =>
+            // clear final partition
+            buffer.clear()
+            spillSize += buffer.spillSize
+          }
+        }
+        found
+      }
+
+      override final def next(): InternalRow = {
+        // Load the next partition if we need to.
+        if ((bufferIterator == null || !bufferIterator.hasNext) && nextBufferAvailable) {
+          fetchNextPartition()
+        }
+
+        if (bufferIterator.hasNext) {
+          bufferIterator.next()
+        } else if (stream.hasNext) {
+          stream.next()
+        } else {
+          throw new NoSuchElementException
+        }
+      }
+    }
   }
 
   override protected def withNewChildInternal(newChild: SparkPlan): WindowGroupLimitExec =
@@ -262,27 +418,26 @@ case class RankHashTableIterator(
   override def hasNext: Boolean = input.hasNext
 
   override def next(): InternalRow = {
-//    if (abort) {
-//      nextRow = input.next().asInstanceOf[UnsafeRow]
-//    } else {
-//      do {
-//        nextRow = input.next().asInstanceOf[UnsafeRow]
-//        if (groupToRankInfo.size < hashTableSize) {
-//          val groupKey = grouping(nextRow).hashCode()
-//          val stateInfo = groupToRankInfo.getOrElseUpdate(groupKey, StateInfo())
-//          count = stateInfo.count
-//          rank = stateInfo.rank
-//          currentRank = stateInfo.currentRank
-//          if (rank <= limit) {
-//            increaseRank()
-//            stateInfo.update(count, rank, currentRank)
-//          }
-//        } else {
-//          abort = true
-//        }
-//      } while (rank > limit && input.hasNext && !abort)
-//    }
-    nextRow = input.next().asInstanceOf[UnsafeRow]
+    if (abort) {
+      nextRow = input.next().asInstanceOf[UnsafeRow]
+    } else {
+      do {
+        nextRow = input.next().asInstanceOf[UnsafeRow]
+        if (groupToRankInfo.size < hashTableSize) {
+          val groupKey = grouping(nextRow).hashCode()
+          val stateInfo = groupToRankInfo.getOrElseUpdate(groupKey, StateInfo())
+          count = stateInfo.count
+          rank = stateInfo.rank
+          currentRank = stateInfo.currentRank
+          if (rank <= limit) {
+            increaseRank()
+            stateInfo.update(count, rank, currentRank)
+          }
+        } else {
+          abort = true
+        }
+      } while (rank > limit && input.hasNext && !abort)
+    }
 
     nextRow
   }
