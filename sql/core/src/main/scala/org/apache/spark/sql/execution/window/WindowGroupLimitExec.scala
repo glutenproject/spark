@@ -25,7 +25,7 @@ import org.apache.spark.{SparkEnv, TaskContext}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, BindReferences, DenseRank, Expression, Rank, RowNumber, RowOrdering, SortOrder, SortPrefix, UnsafeProjection, UnsafeRow}
-import org.apache.spark.sql.catalyst.expressions.codegen.{GenerateOrdering, LazilyGeneratedOrdering}
+import org.apache.spark.sql.catalyst.expressions.codegen.GenerateOrdering
 import org.apache.spark.sql.catalyst.plans.physical.{AllTuples, ClusteredDistribution, Distribution, Partitioning}
 import org.apache.spark.sql.execution.{ExternalAppendOnlyUnsafeRowArray, SortPrefixUtils, SparkPlan, UnaryExecNode, UnsafeExternalRowSorter}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
@@ -169,7 +169,6 @@ case class WindowGroupLimitExec(
       peakMemory: SQLMetric,
       spillSize: SQLMetric,
       sortTime: SQLMetric): Iterator[InternalRow] = {
-    val ord = new LazilyGeneratedOrdering(orderSpec, child.output)
     val inMemoryThreshold = conf.windowExecBufferInMemoryThreshold
     val spillThreshold = conf.windowExecBufferSpillThreshold
     val hashTableSize = conf.windowGroupLimitHashTableSize
@@ -182,7 +181,7 @@ case class WindowGroupLimitExec(
       var nextRow: UnsafeRow = null
       val groupToBuffer = mutable.HashMap.empty[Int, ExternalAppendOnlyUnsafeRowArray]
 
-      while (stream.hasNext && groupToBuffer.size < 1000) {
+      while (stream.hasNext && groupToBuffer.size < hashTableSize) {
         nextRow = stream.next().asInstanceOf[UnsafeRow]
         val groupKey = grouping(nextRow).hashCode()
         val buffer = groupToBuffer.getOrElseUpdate(groupKey,
@@ -206,7 +205,7 @@ case class WindowGroupLimitExec(
       var bufferIterator: Iterator[InternalRow] = _
       val orderingSatisfies = SortOrder.orderingSatisfies(child.outputOrdering, orderSpec)
       private[this] def fetchNextPartition(): Unit = {
-        bufferIterator = if (groupToBuffer.size >= 1000) {
+        bufferIterator = if (groupToBuffer.size >= hashTableSize) {
           nextBuffer.generateIterator()
         } else if (orderingSatisfies) {
           new RankIterator(output, nextBuffer.generateIterator(), orderSpec, limit)
@@ -223,9 +222,6 @@ case class WindowGroupLimitExec(
           spillSize += metrics.memoryBytesSpilled - spillSizeBefore
           metrics.incPeakExecutionMemory(sorter.getPeakMemoryUsage)
           new RankIterator(output, sortedIterator, orderSpec, limit)
-
-//          val sortedIterator =
-//            Utils.sort(nextBuffer.generateIterator().asInstanceOf[Iterator[InternalRow]])(ord)
         }
 
         fetchNextBuffer()
