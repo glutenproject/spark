@@ -43,8 +43,6 @@ case object Final extends WindowGroupLimitMode
  * @param partitionSpec Should be the same as [[WindowExec#partitionSpec]]
  * @param orderSpec Should be the same as [[WindowExec#orderSpec]]
  * @param rankLikeFunction The function to compute row rank, should be RowNumber/Rank/DenseRank.
- * @param testSpillFrequency Method for configuring periodic spilling in unit tests. If set, will
- *                           spill every `frequency` records.
  */
 case class WindowGroupLimitExec(
     partitionSpec: Seq[Expression],
@@ -52,8 +50,7 @@ case class WindowGroupLimitExec(
     rankLikeFunction: Expression,
     limit: Int,
     mode: WindowGroupLimitMode,
-    child: SparkPlan,
-    testSpillFrequency: Int = 0) extends UnaryExecNode {
+    child: SparkPlan) extends UnaryExecNode {
 
   override def output: Seq[Attribute] = child.output
 
@@ -158,9 +155,6 @@ case class WindowGroupLimitExec(
     rowSorter = UnsafeExternalRowSorter.create(
       schema, ordering, prefixComparator, prefixComputer, pageSize, canUseRadixSort)
 
-//    if (testSpillFrequency > 0) {
-//      rowSorter.setTestSpillFrequency(testSpillFrequency)
-//    }
     rowSorter
   }
 
