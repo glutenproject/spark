@@ -105,12 +105,29 @@ class QueryExecution(
     case other => other
   }
 
+  // The plan that has been normalized by custom rules, so that it's more likely to hit cache.
+  lazy val normalized: LogicalPlan = {
+    val normalizationRules = sparkSession.sessionState.planNormalizationRules
+    if (normalizationRules.isEmpty) {
+      commandExecuted
+    } else {
+      val planChangeLogger = new PlanChangeLogger[LogicalPlan]()
+      val normalized = normalizationRules.foldLeft(commandExecuted) { (p, rule) =>
+        val result = rule.apply(p)
+        planChangeLogger.logRule(rule.ruleName, p, result)
+        result
+      }
+      planChangeLogger.logBatch("Plan Normalization", commandExecuted, normalized)
+      normalized
+    }
+  }
+
   lazy val withCachedData: LogicalPlan = sparkSession.withActive {
     assertAnalyzed()
     assertSupported()
     // clone the plan to avoid sharing the plan instance between different stages like analyzing,
     // optimizing and planning.
-    sparkSession.sharedState.cacheManager.useCachedData(commandExecuted.clone())
+    sparkSession.sharedState.cacheManager.useCachedData(normalized.clone())
   }
 
   def assertCommandExecuted(): Unit = commandExecuted
@@ -394,7 +411,7 @@ object QueryExecution {
 
   /**
    * Construct a sequence of rules that are used to prepare a planned [[SparkPlan]] for execution.
-   * These rules will make sure subqueries are planned, make use the data partitioning and ordering
+   * These rules will make sure subqueries are planned, make sure the data partitioning and ordering
    * are correct, insert whole stage code gen, and try to reduce the work done by reusing exchanges
    * and subqueries.
    */

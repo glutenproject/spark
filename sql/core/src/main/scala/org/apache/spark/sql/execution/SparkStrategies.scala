@@ -34,6 +34,7 @@ import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors
 import org.apache.spark.sql.execution.aggregate.AggUtils
 import org.apache.spark.sql.execution.columnar.{InMemoryRelation, InMemoryTableScanExec}
 import org.apache.spark.sql.execution.command._
+import org.apache.spark.sql.execution.datasources.{WriteFiles, WriteFilesExec}
 import org.apache.spark.sql.execution.exchange.{REBALANCE_PARTITIONS_BY_COL, REBALANCE_PARTITIONS_BY_NONE, REPARTITION_BY_COL, REPARTITION_BY_NUM, ShuffleExchangeExec}
 import org.apache.spark.sql.execution.python._
 import org.apache.spark.sql.execution.streaming._
@@ -627,6 +628,18 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
     }
   }
 
+  object WindowGroupLimit extends Strategy {
+    def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
+      case logical.WindowGroupLimit(partitionSpec, orderSpec, rankLikeFunction, limit, child) =>
+        val partialWindowGroupLimit = execution.window.WindowGroupLimitExec(partitionSpec,
+          orderSpec, rankLikeFunction, limit, execution.window.Partial, planLater(child))
+        val finalWindowGroupLimit = execution.window.WindowGroupLimitExec(partitionSpec, orderSpec,
+          rankLikeFunction, limit, execution.window.Final, partialWindowGroupLimit)
+        finalWindowGroupLimit :: Nil
+      case _ => Nil
+    }
+  }
+
   protected lazy val singleRowRdd = session.sparkContext.parallelize(Seq(InternalRow()), 1)
 
   object InMemoryScans extends Strategy {
@@ -894,6 +907,9 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
         throw QueryExecutionErrors.ddlUnsupportedTemporarilyError("MERGE INTO TABLE")
       case logical.CollectMetrics(name, metrics, child) =>
         execution.CollectMetricsExec(name, metrics, planLater(child)) :: Nil
+      case WriteFiles(child, fileFormat, partitionColumns, bucket, options, staticPartitions) =>
+        WriteFilesExec(planLater(child), fileFormat, partitionColumns, bucket, options,
+          staticPartitions) :: Nil
       case _ => Nil
     }
   }

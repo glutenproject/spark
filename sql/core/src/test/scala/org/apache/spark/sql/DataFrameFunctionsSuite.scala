@@ -24,10 +24,11 @@ import java.sql.{Date, Timestamp}
 
 import scala.util.Random
 
-import org.apache.spark.SparkException
+import org.apache.spark.{SparkException, SparkRuntimeException}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.{FunctionRegistry, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Alias, ArraysZip, AttributeReference, Expression, NamedExpression, UnaryExpression}
+import org.apache.spark.sql.catalyst.expressions.Cast._
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
 import org.apache.spark.sql.catalyst.plans.logical.OneRowRelation
 import org.apache.spark.sql.catalyst.util.DateTimeTestUtils.{withDefaultTimeZone, UTC}
@@ -163,15 +164,30 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
     checkAnswer(df3.select(map_from_arrays($"k", $"v")), Seq(Row(null)))
 
     val df4 = Seq((1, "a")).toDF("k", "v")
-    intercept[AnalysisException] {
-      df4.select(map_from_arrays($"k", $"v"))
-    }
+    checkError(
+      exception = intercept[AnalysisException] {
+        df4.select(map_from_arrays($"k", $"v"))
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"map_from_arrays(k, v)\"",
+        "paramIndex" -> "1",
+        "requiredType" -> "\"ARRAY\"",
+        "inputSql" -> "\"k\"",
+        "inputType" -> "\"INT\""
+      )
+    )
 
     val df5 = Seq((Seq("a", null), Seq(1, 2))).toDF("k", "v")
-    val msg1 = intercept[Exception] {
+    val e1 = intercept[SparkException] {
       df5.select(map_from_arrays($"k", $"v")).collect
-    }.getMessage
-    assert(msg1.contains("Cannot use null as map key"))
+    }
+    assert(e1.getCause.isInstanceOf[SparkRuntimeException])
+    checkError(
+      exception = e1.getCause.asInstanceOf[SparkRuntimeException],
+      errorClass = "NULL_MAP_KEY",
+      parameters = Map.empty
+    )
 
     val df6 = Seq((Seq(1, 2), Seq("a"))).toDF("k", "v")
     val msg2 = intercept[Exception] {
@@ -1436,17 +1452,52 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
       Seq((Seq(1, 2, 3), Seq(2.0, 2.5))).toDF("a", "b").selectExpr("arrays_overlap(a, b)"),
       Row(true))
 
-    intercept[AnalysisException] {
-      sql("select arrays_overlap(array(1, 2, 3), array('a', 'b', 'c'))")
-    }
+    checkError(
+      exception = intercept[AnalysisException] {
+        sql("select arrays_overlap(array(1, 2, 3), array('a', 'b', 'c'))")
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"arrays_overlap(array(1, 2, 3), array(a, b, c))\"",
+        "functionName" -> "`arrays_overlap`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"ARRAY<INT>\"",
+        "rightType" -> "\"ARRAY<STRING>\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 7, 58,
+        "arrays_overlap(array(1, 2, 3), array('a', 'b', 'c'))"))
+    )
 
-    intercept[AnalysisException] {
-      sql("select arrays_overlap(null, null)")
-    }
+    checkError(
+      exception = intercept[AnalysisException] {
+        sql("select arrays_overlap(null, null)")
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"arrays_overlap(NULL, NULL)\"",
+        "functionName" -> "`arrays_overlap`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"VOID\"",
+        "rightType" -> "\"VOID\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 7, 32, "arrays_overlap(null, null)"))
+    )
 
-    intercept[AnalysisException] {
-      sql("select arrays_overlap(map(1, 2), map(3, 4))")
-    }
+    checkError(
+      exception = intercept[AnalysisException] {
+        sql("select arrays_overlap(map(1, 2), map(3, 4))")
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"arrays_overlap(map(1, 2), map(3, 4))\"",
+        "functionName" -> "`arrays_overlap`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"MAP<INT, INT>\"",
+        "rightType" -> "\"MAP<INT, INT>\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 7, 42,
+        "arrays_overlap(map(1, 2), map(3, 4))"))
+    )
   }
 
   test("slice function") {
@@ -1507,12 +1558,34 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
       idf.selectExpr("array_join(x, ', ')"),
       Seq(Row("1, 2, 3"))
     )
-    intercept[AnalysisException] {
-      idf.selectExpr("array_join(x, 1)")
-    }
-    intercept[AnalysisException] {
-      idf.selectExpr("array_join(x, ', ', 1)")
-    }
+    checkError(
+      exception = intercept[AnalysisException] {
+        idf.selectExpr("array_join(x, 1)")
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"array_join(x, 1)\"",
+        "paramIndex" -> "2",
+        "inputSql" -> "\"1\"",
+        "inputType" -> "\"INT\"",
+        "requiredType" -> "\"STRING\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 0, 15, "array_join(x, 1)"))
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        idf.selectExpr("array_join(x, ', ', 1)")
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"array_join(x, , , 1)\"",
+        "paramIndex" -> "3",
+        "inputSql" -> "\"1\"",
+        "inputType" -> "\"INT\"",
+        "requiredType" -> "\"STRING\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 0, 21, "array_join(x, ', ', 1)"))
+    )
   }
 
   test("array_min function") {
@@ -1731,15 +1804,35 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
   }
 
   test("reverse function - data type mismatch") {
-    val ex1 = intercept[AnalysisException] {
-      sql("select reverse(struct(1, 'a'))")
-    }
-    assert(ex1.getMessage.contains("data type mismatch"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        sql("select reverse(struct(1, 'a'))")
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"reverse(struct(1, a))\"",
+        "paramIndex" -> "1",
+        "inputSql" -> "\"struct(1, a)\"",
+        "inputType" -> "\"STRUCT<col1: INT, col2: STRING>\"",
+        "requiredType" -> "(\"STRING\" or \"ARRAY\")"
+      ),
+      queryContext = Array(ExpectedContext("", "", 7, 29, "reverse(struct(1, 'a'))"))
+    )
 
-    val ex2 = intercept[AnalysisException] {
-      sql("select reverse(map(1, 'a'))")
-    }
-    assert(ex2.getMessage.contains("data type mismatch"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        sql("select reverse(map(1, 'a'))")
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"reverse(map(1, a))\"",
+        "paramIndex" -> "1",
+        "inputSql" -> "\"map(1, a)\"",
+        "inputType" -> "\"MAP<INT, STRING>\"",
+        "requiredType" -> "(\"STRING\" or \"ARRAY\")"
+      ),
+      queryContext = Array(ExpectedContext("", "", 7, 26, "reverse(map(1, 'a'))"))
+    )
   }
 
   test("array position function") {
@@ -2381,18 +2474,59 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
 
     // Error test cases
     val oneRowDF = Seq((1, "a", Seq(1, 2, 3))).toDF("i", "s", "arr")
-    intercept[AnalysisException] {
-      oneRowDF.select(flatten($"arr"))
-    }
-    intercept[AnalysisException] {
-      oneRowDF.select(flatten($"i"))
-    }
-    intercept[AnalysisException] {
-      oneRowDF.select(flatten($"s"))
-    }
-    intercept[AnalysisException] {
-      oneRowDF.selectExpr("flatten(null)")
-    }
+    checkError(
+      exception = intercept[AnalysisException] {
+        oneRowDF.select(flatten($"arr"))
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"flatten(arr)\"",
+        "paramIndex" -> "1",
+        "inputSql" -> "\"arr\"",
+        "inputType" -> "\"ARRAY<INT>\"",
+        "requiredType" -> "\"ARRAY\" of \"ARRAY\""
+      )
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        oneRowDF.select(flatten($"i"))
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"flatten(i)\"",
+        "paramIndex" -> "1",
+        "inputSql" -> "\"i\"",
+        "inputType" -> "\"INT\"",
+        "requiredType" -> "\"ARRAY\" of \"ARRAY\""
+      )
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        oneRowDF.select(flatten($"s"))
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"flatten(s)\"",
+        "paramIndex" -> "1",
+        "inputSql" -> "\"s\"",
+        "inputType" -> "\"STRING\"",
+        "requiredType" -> "\"ARRAY\" of \"ARRAY\""
+      )
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        oneRowDF.selectExpr("flatten(null)")
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"flatten(NULL)\"",
+        "paramIndex" -> "1",
+        "inputSql" -> "\"NULL\"",
+        "inputType" -> "\"VOID\"",
+        "requiredType" -> "\"ARRAY\" of \"ARRAY\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 0, 12, "flatten(null)"))
+    )
   }
 
   test("array_repeat function") {
@@ -2475,16 +2609,46 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
     // Error test cases
     val invalidTypeDF = Seq(("hi", "1")).toDF("a", "b")
 
-    intercept[AnalysisException] {
-      invalidTypeDF.select(array_repeat($"a", $"b"))
-    }
-    intercept[AnalysisException] {
-      invalidTypeDF.select(array_repeat($"a", lit("1")))
-    }
-    intercept[AnalysisException] {
-      invalidTypeDF.selectExpr("array_repeat(a, 1.0)")
-    }
-
+    checkError(
+      exception = intercept[AnalysisException] {
+        invalidTypeDF.select(array_repeat($"a", $"b"))
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"array_repeat(a, b)\"",
+        "paramIndex" -> "2",
+        "inputSql" -> "\"b\"",
+        "inputType" -> "\"STRING\"",
+        "requiredType" -> "\"INT\""
+      )
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        invalidTypeDF.select(array_repeat($"a", lit("1")))
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"array_repeat(a, 1)\"",
+        "paramIndex" -> "2",
+        "inputSql" -> "\"1\"",
+        "inputType" -> "\"STRING\"",
+        "requiredType" -> "\"INT\""
+      )
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        invalidTypeDF.selectExpr("array_repeat(a, 1.0)")
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"array_repeat(a, 1.0)\"",
+        "paramIndex" -> "2",
+        "inputSql" -> "\"1.0\"",
+        "inputType" -> "\"DECIMAL(2,1)\"",
+        "requiredType" -> "\"INT\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 0, 19, "array_repeat(a, 1.0)"))
+    )
   }
 
   test("array remove") {
@@ -2702,33 +2866,117 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
     checkAnswer(df5.selectExpr("array_except(a, b)"), ans5)
 
     val df6 = Seq((null, null)).toDF("a", "b")
-    intercept[AnalysisException] {
-      df6.select(array_except($"a", $"b"))
-    }
-    intercept[AnalysisException] {
-      df6.selectExpr("array_except(a, b)")
-    }
+    checkError(
+      exception = intercept[AnalysisException] {
+        df6.select(array_except($"a", $"b"))
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_except(a, b)\"",
+        "functionName" -> "`array_except`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"VOID\"",
+        "rightType" -> "\"VOID\""
+      )
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        df6.selectExpr("array_except(a, b)")
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_except(a, b)\"",
+        "functionName" -> "`array_except`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"VOID\"",
+        "rightType" -> "\"VOID\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 0, 17, "array_except(a, b)"))
+    )
     val df7 = Seq((Array(1), Array("a"))).toDF("a", "b")
-    intercept[AnalysisException] {
-      df7.select(array_except($"a", $"b"))
-    }
-    intercept[AnalysisException] {
-      df7.selectExpr("array_except(a, b)")
-    }
+    checkError(
+      exception = intercept[AnalysisException] {
+        df7.select(array_except($"a", $"b"))
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_except(a, b)\"",
+        "functionName" -> "`array_except`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"ARRAY<INT>\"",
+        "rightType" -> "\"ARRAY<STRING>\""
+      )
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        df7.selectExpr("array_except(a, b)")
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_except(a, b)\"",
+        "functionName" -> "`array_except`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"ARRAY<INT>\"",
+        "rightType" -> "\"ARRAY<STRING>\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 0, 17, "array_except(a, b)"))
+    )
     val df8 = Seq((Array("a"), null)).toDF("a", "b")
-    intercept[AnalysisException] {
-      df8.select(array_except($"a", $"b"))
-    }
-    intercept[AnalysisException] {
-      df8.selectExpr("array_except(a, b)")
-    }
+    checkError(
+      exception = intercept[AnalysisException] {
+        df8.select(array_except($"a", $"b"))
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_except(a, b)\"",
+        "functionName" -> "`array_except`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"ARRAY<STRING>\"",
+        "rightType" -> "\"VOID\""
+      )
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        df8.selectExpr("array_except(a, b)")
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_except(a, b)\"",
+        "functionName" -> "`array_except`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"ARRAY<STRING>\"",
+        "rightType" -> "\"VOID\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 0, 17, "array_except(a, b)"))
+    )
     val df9 = Seq((null, Array("a"))).toDF("a", "b")
-    intercept[AnalysisException] {
-      df9.select(array_except($"a", $"b"))
-    }
-    intercept[AnalysisException] {
-      df9.selectExpr("array_except(a, b)")
-    }
+    checkError(
+      exception = intercept[AnalysisException] {
+        df9.select(array_except($"a", $"b"))
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_except(a, b)\"",
+        "functionName" -> "`array_except`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"VOID\"",
+        "rightType" -> "\"ARRAY<STRING>\""
+      )
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        df9.selectExpr("array_except(a, b)")
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_except(a, b)\"",
+        "functionName" -> "`array_except`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"VOID\"",
+        "rightType" -> "\"ARRAY<STRING>\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 0, 17, "array_except(a, b)"))
+    )
 
     val df10 = Seq(
       (Array[Integer](1, 2), Array[Integer](2)),
@@ -2771,28 +3019,91 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
     checkAnswer(df5.selectExpr("array_intersect(a, b)"), ans5)
 
     val df6 = Seq((null, null)).toDF("a", "b")
-    assert(intercept[AnalysisException] {
-      df6.select(array_intersect($"a", $"b"))
-    }.getMessage.contains("data type mismatch"))
-    assert(intercept[AnalysisException] {
-      df6.selectExpr("array_intersect(a, b)")
-    }.getMessage.contains("data type mismatch"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        df6.select(array_intersect($"a", $"b"))
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_intersect(a, b)\"",
+        "functionName" -> "`array_intersect`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"VOID\"",
+        "rightType" -> "\"VOID\""
+      )
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        df6.selectExpr("array_intersect(a, b)")
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_intersect(a, b)\"",
+        "functionName" -> "`array_intersect`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"VOID\"",
+        "rightType" -> "\"VOID\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 0, 20, "array_intersect(a, b)"))
+    )
 
     val df7 = Seq((Array(1), Array("a"))).toDF("a", "b")
-    assert(intercept[AnalysisException] {
-      df7.select(array_intersect($"a", $"b"))
-    }.getMessage.contains("data type mismatch"))
-    assert(intercept[AnalysisException] {
-      df7.selectExpr("array_intersect(a, b)")
-    }.getMessage.contains("data type mismatch"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        df7.select(array_intersect($"a", $"b"))
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_intersect(a, b)\"",
+        "functionName" -> "`array_intersect`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"ARRAY<INT>\"",
+        "rightType" -> "\"ARRAY<STRING>\""
+      )
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        df7.selectExpr("array_intersect(a, b)")
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_intersect(a, b)\"",
+        "functionName" -> "`array_intersect`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"ARRAY<INT>\"",
+        "rightType" -> "\"ARRAY<STRING>\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 0, 20, "array_intersect(a, b)"))
+    )
 
     val df8 = Seq((null, Array("a"))).toDF("a", "b")
-    assert(intercept[AnalysisException] {
-      df8.select(array_intersect($"a", $"b"))
-    }.getMessage.contains("data type mismatch"))
-    assert(intercept[AnalysisException] {
-      df8.selectExpr("array_intersect(a, b)")
-    }.getMessage.contains("data type mismatch"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        df8.select(array_intersect($"a", $"b"))
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_intersect(a, b)\"",
+        "functionName" -> "`array_intersect`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"VOID\"",
+        "rightType" -> "\"ARRAY<STRING>\""
+      )
+    )
+    checkError(
+      exception = intercept[AnalysisException] {
+        df8.selectExpr("array_intersect(a, b)")
+      },
+      errorClass = "DATATYPE_MISMATCH.BINARY_ARRAY_DIFF_TYPES",
+      parameters = Map(
+        "sqlExpr" -> "\"array_intersect(a, b)\"",
+        "functionName" -> "`array_intersect`",
+        "arrayType" -> "\"ARRAY\"",
+        "leftType" -> "\"VOID\"",
+        "rightType" -> "\"ARRAY<STRING>\""
+      ),
+      queryContext = Array(ExpectedContext("", "", 0, 20, "array_intersect(a, b)"))
+    )
   }
 
   test("transform function - array for primitive type not containing null") {
@@ -3698,18 +4009,22 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
     ).toDF("i")
 
     def testArrayOfPrimitiveTypeNotContainsNull(): Unit = {
-      checkAnswer(df.selectExpr("aggregate(i, 0, (acc, x) -> acc + x)"),
-        Seq(
-          Row(25),
-          Row(31),
-          Row(0),
-          Row(null)))
-      checkAnswer(df.selectExpr("aggregate(i, 0, (acc, x) -> acc + x, acc -> acc * 10)"),
-        Seq(
-          Row(250),
-          Row(310),
-          Row(0),
-          Row(null)))
+      Seq("aggregate", "reduce").foreach { agg =>
+        checkAnswer(
+          df.selectExpr(s"$agg(i, 0, (acc, x) -> acc + x)"),
+          Seq(
+            Row(25),
+            Row(31),
+            Row(0),
+            Row(null)))
+        checkAnswer(
+          df.selectExpr(s"$agg(i, 0, (acc, x) -> acc + x, acc -> acc * 10)"),
+          Seq(
+            Row(250),
+            Row(310),
+            Row(0),
+            Row(null)))
+      }
       checkAnswer(df.select(aggregate(col("i"), lit(0), (acc, x) => acc + x)),
         Seq(
           Row(25),
@@ -3740,19 +4055,22 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
     ).toDF("i")
 
     def testArrayOfPrimitiveTypeContainsNull(): Unit = {
-      checkAnswer(df.selectExpr("aggregate(i, 0, (acc, x) -> acc + x)"),
-        Seq(
-          Row(25),
-          Row(null),
-          Row(0),
-          Row(null)))
-      checkAnswer(
-        df.selectExpr("aggregate(i, 0, (acc, x) -> acc + x, acc -> coalesce(acc, 0) * 10)"),
-        Seq(
-          Row(250),
-          Row(0),
-          Row(0),
-          Row(null)))
+      Seq("aggregate", "reduce").foreach { agg =>
+        checkAnswer(
+          df.selectExpr(s"$agg(i, 0, (acc, x) -> acc + x)"),
+          Seq(
+            Row(25),
+            Row(null),
+            Row(0),
+            Row(null)))
+        checkAnswer(
+          df.selectExpr(s"$agg(i, 0, (acc, x) -> acc + x, acc -> coalesce(acc, 0) * 10)"),
+          Seq(
+            Row(250),
+            Row(0),
+            Row(0),
+            Row(null)))
+      }
       checkAnswer(df.select(aggregate(col("i"), lit(0), (acc, x) => acc + x)),
         Seq(
           Row(25),
@@ -3785,19 +4103,22 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
     ).toDF("ss", "s")
 
     def testNonPrimitiveType(): Unit = {
-      checkAnswer(df.selectExpr("aggregate(ss, s, (acc, x) -> concat(acc, x))"),
-        Seq(
-          Row("acab"),
-          Row(null),
-          Row("c"),
-          Row(null)))
-      checkAnswer(
-        df.selectExpr("aggregate(ss, s, (acc, x) -> concat(acc, x), acc -> coalesce(acc , ''))"),
-        Seq(
-          Row("acab"),
-          Row(""),
-          Row("c"),
-          Row(null)))
+      Seq("aggregate", "reduce").foreach { agg =>
+        checkAnswer(
+          df.selectExpr(s"$agg(ss, s, (acc, x) -> concat(acc, x))"),
+          Seq(
+            Row("acab"),
+            Row(null),
+            Row("c"),
+            Row(null)))
+        checkAnswer(
+          df.selectExpr(s"$agg(ss, s, (acc, x) -> concat(acc, x), acc -> coalesce(acc , ''))"),
+          Seq(
+            Row("acab"),
+            Row(""),
+            Row("c"),
+            Row(null)))
+      }
       checkAnswer(df.select(aggregate(col("ss"), col("s"), (acc, x) => concat(acc, x))),
         Seq(
           Row("acab"),
@@ -3830,32 +4151,36 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
       (null, 4)
     ).toDF("s", "i")
 
-    val ex1 = intercept[AnalysisException] {
-      df.selectExpr("aggregate(s, '', x -> x)")
-    }
-    assert(ex1.getMessage.contains("The number of lambda function arguments '1' does not match"))
+    Seq("aggregate", "reduce").foreach { agg =>
+      val ex1 = intercept[AnalysisException] {
+        df.selectExpr(s"$agg(s, '', x -> x)")
+      }
+      assert(ex1.getMessage.contains("The number of lambda function arguments '1' does not match"))
 
-    val ex2 = intercept[AnalysisException] {
-      df.selectExpr("aggregate(s, '', (acc, x) -> x, (acc, x) -> x)")
+      val ex2 = intercept[AnalysisException] {
+        df.selectExpr(s"$agg(s, '', (acc, x) -> x, (acc, x) -> x)")
+      }
+      assert(ex2.getMessage.contains("The number of lambda function arguments '2' does not match"))
     }
-    assert(ex2.getMessage.contains("The number of lambda function arguments '2' does not match"))
 
-    checkError(
-      exception = intercept[AnalysisException] {
-        df.selectExpr("aggregate(i, 0, (acc, x) -> x)")
-      },
-      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
-      sqlState = None,
-      parameters = Map(
-        "sqlExpr" -> """"aggregate(i, 0, lambdafunction(x, acc, x), lambdafunction(id, id))"""",
-        "paramIndex" -> "1",
-        "inputSql" -> "\"i\"",
-        "inputType" -> "\"INT\"",
-        "requiredType" -> "\"ARRAY\""),
-      context = ExpectedContext(
-        fragment = "aggregate(i, 0, (acc, x) -> x)",
-        start = 0,
-        stop = 29))
+    Seq("aggregate", "reduce").foreach { agg =>
+      checkError(
+        exception = intercept[AnalysisException] {
+          df.selectExpr(s"$agg(i, 0, (acc, x) -> x)")
+        },
+        errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+        sqlState = None,
+        parameters = Map(
+          "sqlExpr" -> s""""$agg(i, 0, lambdafunction(x, acc, x), lambdafunction(id, id))"""",
+          "paramIndex" -> "1",
+          "inputSql" -> "\"i\"",
+          "inputType" -> "\"INT\"",
+          "requiredType" -> "\"ARRAY\""),
+        context = ExpectedContext(
+          fragment = s"$agg(i, 0, (acc, x) -> x)",
+          start = 0,
+          stop = agg.length + 20))
+    }
 
     // scalastyle:off line.size.limit
     checkError(
@@ -3873,18 +4198,20 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
     // scalastyle:on line.size.limit
 
     // scalastyle:off line.size.limit
-    checkError(
-      exception = intercept[AnalysisException] {
-        df.selectExpr("aggregate(s, 0, (acc, x) -> x)")
-      },
-      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
-      parameters = Map(
-        "sqlExpr" -> """"aggregate(s, 0, lambdafunction(namedlambdavariable(), namedlambdavariable(), namedlambdavariable()), lambdafunction(namedlambdavariable(), namedlambdavariable()))"""",
-        "paramIndex" -> "3",
-        "inputSql" -> "\"lambdafunction(namedlambdavariable(), namedlambdavariable(), namedlambdavariable())\"",
-        "inputType" -> "\"STRING\"",
-        "requiredType" -> "\"INT\""
-      ))
+    Seq("aggregate", "reduce").foreach { agg =>
+      checkError(
+        exception = intercept[AnalysisException] {
+          df.selectExpr(s"$agg(s, 0, (acc, x) -> x)")
+        },
+        errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+        parameters = Map(
+          "sqlExpr" -> s""""$agg(s, 0, lambdafunction(namedlambdavariable(), namedlambdavariable(), namedlambdavariable()), lambdafunction(namedlambdavariable(), namedlambdavariable()))"""",
+          "paramIndex" -> "3",
+          "inputSql" -> "\"lambdafunction(namedlambdavariable(), namedlambdavariable(), namedlambdavariable())\"",
+          "inputType" -> "\"STRING\"",
+          "requiredType" -> "\"INT\""
+        ))
+    }
     // scalastyle:on line.size.limit
 
     // scalastyle:off line.size.limit
@@ -3902,16 +4229,18 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
       ))
     // scalastyle:on line.size.limit
 
-    checkError(
-      exception =
-        intercept[AnalysisException](df.selectExpr("aggregate(a, 0, (acc, x) -> x)")),
-      errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
-      sqlState = None,
-      parameters = Map("objectName" -> "`a`", "proposal" -> "`i`, `s`"),
-      context = ExpectedContext(
-        fragment = "a",
-        start = 10,
-        stop = 10))
+    Seq("aggregate", "reduce").foreach { agg =>
+      checkError(
+        exception =
+          intercept[AnalysisException](df.selectExpr(s"$agg(a, 0, (acc, x) -> x)")),
+        errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+        sqlState = None,
+        parameters = Map("objectName" -> "`a`", "proposal" -> "`i`, `s`"),
+        context = ExpectedContext(
+          fragment = "a",
+          start = agg.length + 1,
+          stop = agg.length + 1))
+    }
   }
 
   test("map_zip_with function - map of primitive types") {
@@ -4190,15 +4519,25 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
     assert(ex2.getMessage.contains(
       "The number of lambda function arguments '3' does not match"))
 
-    val ex3 = intercept[Exception] {
+    val ex3 = intercept[SparkException] {
       dfExample1.selectExpr("transform_keys(i, (k, v) -> v)").show()
     }
-    assert(ex3.getMessage.contains("Cannot use null as map key"))
+    assert(ex3.getCause.isInstanceOf[SparkRuntimeException])
+    checkError(
+      exception = ex3.getCause.asInstanceOf[SparkRuntimeException],
+      errorClass = "NULL_MAP_KEY",
+      parameters = Map.empty
+    )
 
     val ex3a = intercept[Exception] {
       dfExample1.select(transform_keys(col("i"), (k, v) => v)).show()
     }
-    assert(ex3a.getMessage.contains("Cannot use null as map key"))
+    assert(ex3a.getCause.isInstanceOf[SparkRuntimeException])
+    checkError(
+      exception = ex3a.getCause.asInstanceOf[SparkRuntimeException],
+      errorClass = "NULL_MAP_KEY",
+      parameters = Map.empty
+    )
 
     checkError(
       exception = intercept[AnalysisException] {
@@ -4542,14 +4881,34 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
       (Seq.empty, Seq("x", "z"), 3),
       (null, Seq("x", "z"), 4)
     ).toDF("a1", "a2", "i")
-    val ex1 = intercept[AnalysisException] {
-      df.selectExpr("zip_with(a1, a2, x -> x)")
-    }
-    assert(ex1.getMessage.contains("The number of lambda function arguments '1' does not match"))
-    val ex2 = intercept[AnalysisException] {
-      df.selectExpr("zip_with(a1, a2, (acc, x) -> x, (acc, x) -> x)")
-    }
-    assert(ex2.getMessage.contains("Invalid number of arguments for function zip_with"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        df.selectExpr("zip_with(a1, a2, x -> x)")
+      },
+      errorClass = "_LEGACY_ERROR_TEMP_2300",
+      parameters = Map(
+        "namesSize" -> "1",
+        "argInfoSize" -> "2"),
+      context = ExpectedContext(
+        fragment = "x -> x",
+        start = 17,
+        stop = 22)
+    )
+
+    checkError(
+      exception = intercept[AnalysisException] {
+        df.selectExpr("zip_with(a1, a2, (acc, x) -> x, (acc, x) -> x)")
+      },
+      errorClass = "WRONG_NUM_ARGS.WITH_SUGGESTION",
+      parameters = Map(
+        "functionName" -> toSQLId("zip_with"),
+        "expectedNum" -> "3",
+        "actualNum" -> "4"),
+      context = ExpectedContext(
+        fragment = "zip_with(a1, a2, (acc, x) -> x, (acc, x) -> x)",
+        start = 0,
+        stop = 45)
+    )
 
     checkError(
       exception = intercept[AnalysisException] {
@@ -4781,10 +5140,15 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
 
   test("SPARK-24734: Fix containsNull of Concat for array type") {
     val df = Seq((Seq(1), Seq[Integer](null), Seq("a", "b"))).toDF("k1", "k2", "v")
-    val ex = intercept[Exception] {
+    val e1 = intercept[SparkException] {
       df.select(map_from_arrays(concat($"k1", $"k2"), $"v")).show()
     }
-    assert(ex.getMessage.contains("Cannot use null as map key"))
+    assert(e1.getCause.isInstanceOf[SparkRuntimeException])
+    checkError(
+      exception = e1.getCause.asInstanceOf[SparkRuntimeException],
+      errorClass = "NULL_MAP_KEY",
+      parameters = Map.empty
+    )
   }
 
   test("SPARK-26370: Fix resolution of higher-order function for the same identifier") {
@@ -4837,7 +5201,16 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
 
   test("SPARK-26071: convert map to array and use as map key") {
     val df = Seq(Map(1 -> "a")).toDF("m")
-    intercept[AnalysisException](df.select(map($"m", lit(1))))
+    checkError(
+      exception = intercept[AnalysisException] {
+        df.select(map($"m", lit(1)))
+      },
+      errorClass = "DATATYPE_MISMATCH.INVALID_MAP_KEY_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"map(m, 1)\"",
+        "keyType" -> "\"MAP<INT, STRING>\""
+      )
+    )
     checkAnswer(
       df.select(map(map_entries($"m"), lit(1))),
       Row(Map(Seq(Row(1, "a")) -> 1)))
@@ -4863,6 +5236,168 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
       map_zip_with($"m1", $"m2", (k2: Column, iv1: Column, iv2: Column) =>
         ov1 + iv1 + ov2 + iv2))),
       Seq(Row(Map("a" -> Map("a" -> 6, "b" -> 8), "b" -> Map("a" -> 8, "b" -> 10))))
+    )
+  }
+
+  test("from_json - invalid schema string") {
+    checkError(
+      exception = intercept[AnalysisException] {
+        sql("select from_json('{\"a\":1}', 1)")
+      },
+      errorClass = "INVALID_SCHEMA.NON_STRING_LITERAL",
+      parameters = Map(
+        "inputSchema" -> "\"1\""
+      ),
+      context = ExpectedContext(
+        fragment = "from_json('{\"a\":1}', 1)",
+        start = 7,
+        stop = 29
+      )
+    )
+  }
+
+  test("test array_compact") {
+    val df = Seq(
+      (Array[Integer](null, 1, 2, null, 3, 4),
+        Array("a", null, "b", null, "c", "d"), Array("", "")),
+      (Array.empty[Integer], Array("1.0", "2.2", "3.0"), Array.empty[String]),
+      (Array[Integer](null, null, null), null, null)
+    ).toDF("a", "b", "c")
+
+    checkAnswer(
+      df.select(array_compact($"a"),
+        array_compact($"b"), array_compact($"c")),
+      Seq(Row(Seq(1, 2, 3, 4), Seq("a", "b", "c", "d"), Seq("", "")),
+        Row(Seq.empty[Integer], Seq("1.0", "2.2", "3.0"), Seq.empty[String]),
+        Row(Seq.empty[Integer], null, null))
+    )
+
+    checkAnswer(
+      OneRowRelation().selectExpr("array_compact(array(1.0D, 2.0D, null))"),
+      Seq(Row(Seq(1.0, 2.0)))
+    )
+
+    // complex data type
+    checkAnswer(
+      OneRowRelation().
+        selectExpr("array_compact(array(array(1, null,3), null, array(null, 2, 3)))"),
+      Seq(Row(Seq(Seq(1, null, 3), Seq(null, 2, 3))))
+    )
+
+    // unsupported data type
+    val invalidDatatypeDF = Seq(1, 2, 3).toDF("a")
+    checkError(
+      exception = intercept[AnalysisException] {
+        invalidDatatypeDF.select(array_compact($"a"))
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"array_compact(a)\"",
+        "paramIndex" -> "1",
+        "requiredType" -> "\"ARRAY\"",
+        "inputSql" -> "\"a\"",
+        "inputType" -> "\"INT\""
+      ))
+  }
+
+  test("array_append -> Unit Test cases for the function ") {
+    val df1 = Seq((Array[Int](3, 2, 5, 1, 2), 3)).toDF("a", "b")
+    checkAnswer(df1.select(array_append(col("a"), col("b"))), Seq(Row(Seq(3, 2, 5, 1, 2, 3))))
+    val df2 = Seq((Array[String]("a", "b", "c"), "d")).toDF("a", "b")
+    checkAnswer(df2.select(array_append(col("a"), col("b"))), Seq(Row(Seq("a", "b", "c", "d"))))
+    val df3 = Seq((Array[String]("a", "b", "c"), 3)).toDF("a", "b")
+    checkError(
+      exception = intercept[AnalysisException] {
+        df3.select(array_append(col("a"), col("b")))
+      },
+      errorClass = "DATATYPE_MISMATCH.ARRAY_FUNCTION_DIFF_TYPES",
+      parameters = Map(
+        "functionName" -> "`array_append`",
+        "dataType" -> "\"ARRAY\"",
+        "leftType" -> "\"ARRAY<STRING>\"",
+        "rightType" -> "\"INT\"",
+        "sqlExpr" -> "\"array_append(a, b)\"")
+    )
+
+    checkAnswer(df1.selectExpr("array_append(a, 3)"), Seq(Row(Seq(3, 2, 5, 1, 2, 3))))
+
+    checkAnswer(df2.selectExpr("array_append(a, b)"), Seq(Row(Seq("a", "b", "c", "d"))))
+
+    checkError(
+      exception = intercept[AnalysisException] {
+        df3.selectExpr("array_append(a, b)")
+      },
+      errorClass = "DATATYPE_MISMATCH.ARRAY_FUNCTION_DIFF_TYPES",
+      parameters = Map(
+        "functionName" -> "`array_append`",
+        "leftType" -> "\"ARRAY<STRING>\"",
+        "rightType" -> "\"INT\"",
+        "sqlExpr" -> "\"array_append(a, b)\"",
+        "dataType" -> "\"ARRAY\""
+      ),
+      context = ExpectedContext(
+        fragment = "array_append(a, b)",
+        start = 0,
+        stop = 17
+      )
+    )
+    // Adding null check Unit Tests
+    val df4 = Seq((Array[String]("a", "b", "c"), "d"),
+      (null, "d"),
+      (Array[String]("x", "y", "z"), null),
+      (null, null)
+    ).toDF("a", "b")
+    checkAnswer(df4.selectExpr("array_append(a, b)"),
+      Seq(Row(Seq("a", "b", "c", "d")), Row(null), Row(Seq("x", "y", "z", null)), Row(null)))
+
+    val df5 = Seq((Array[Double](3d, 2d, 5d, 1d, 2d), 3)).toDF("a", "b")
+    checkAnswer(df5.selectExpr("array_append(a, b)"),
+      Seq(Row(Seq(3d, 2d, 5d, 1d, 2d, 3d))))
+
+    val df6 = Seq(("x", "y")).toDF("a", "b")
+    checkError(
+      exception = intercept[AnalysisException] {
+        df6.selectExpr("array_append(a, b)")
+      },
+      errorClass = "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+      parameters = Map(
+        "sqlExpr" -> "\"array_append(a, b)\"",
+        "paramIndex" -> "0",
+        "requiredType" -> "\"ARRAY\"",
+        "inputSql" -> "\"a\"",
+        "inputType" -> "\"STRING\""
+      ),
+      context = ExpectedContext(
+        fragment = "array_append(a, b)",
+        start = 0,
+        stop = 17
+      )
+    )
+
+    val df7 = Seq((Array[Int](3, 2, 5, 1, 2), 3d)).toDF("a", "b")
+    checkAnswer(df7.select(array_append(col("a"), col("b"))),
+      Seq(Row(Seq(3d, 2d, 5d, 1d, 2d, 3d))))
+
+    val df8 = Seq((Array[Double](3d, 2d, 5d, 1d, 2d), 3)).toDF("a", "b")
+    checkAnswer(df8.select(array_append(col("a"), col("b"))),
+      Seq(Row(Seq(3d, 2d, 5d, 1d, 2d, 3d))))
+
+    val df9 = spark.sql("SELECT array(1, 2, null) as a, CAST(null AS INT) as b")
+    checkAnswer(df9.selectExpr("array_append(a, b)"),
+      Seq(Row(Seq(1, 2, null, null)))
+    )
+
+    val df10 = spark.createDataFrame(
+      spark.sparkContext.parallelize(
+        Seq(Row(Seq[Integer](1, 2, 3, null), null))),
+      StructType(List(
+        StructField("a", ArrayType.apply(IntegerType), true),
+        StructField("b", IntegerType, true)
+      ))
+    )
+
+    checkAnswer(df10.selectExpr("array_append(a, b)"),
+      Seq(Row(Seq(1, 2, 3, null, null)))
     )
   }
 }

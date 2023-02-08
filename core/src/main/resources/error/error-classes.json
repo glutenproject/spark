@@ -5,6 +5,17 @@
     ],
     "sqlState" : "42000"
   },
+  "AMBIGUOUS_LATERAL_COLUMN_ALIAS" : {
+    "message" : [
+      "Lateral column alias <name> is ambiguous and has <n> matches."
+    ],
+    "sqlState" : "42000"
+  },
+  "AMBIGUOUS_REFERENCE" : {
+    "message" : [
+      "Reference <name> is ambiguous, could be: <referenceNames>."
+    ]
+  },
   "ARITHMETIC_OVERFLOW" : {
     "message" : [
       "<message>.<alternative> If necessary set <config> to \"false\" to bypass this error."
@@ -48,9 +59,14 @@
     ],
     "sqlState" : "42000"
   },
+  "CANNOT_LOAD_FUNCTION_CLASS" : {
+    "message" : [
+      "Cannot load class <className> when registering the function <functionName>, please make sure it is on the classpath."
+    ]
+  },
   "CANNOT_LOAD_PROTOBUF_CLASS" : {
     "message" : [
-      "Could not load Protobuf class with name <protobufClassName>. Ensure the class name includes package prefix."
+      "Could not load Protobuf class with name <protobufClassName>. <explanation>."
     ]
   },
   "CANNOT_PARSE_DECIMAL" : {
@@ -58,6 +74,11 @@
       "Cannot parse decimal"
     ],
     "sqlState" : "42000"
+  },
+  "CANNOT_PARSE_JSON_FIELD" : {
+    "message" : [
+      "Cannot parse the field name <fieldName> and the value <fieldValue> of the JSON token type <jsonType> to target Spark data type <dataType>"
+    ]
   },
   "CANNOT_PARSE_PROTOBUF_DESCRIPTOR" : {
     "message" : [
@@ -94,11 +115,15 @@
     ],
     "sqlState" : "22005"
   },
-  "COLUMN_NOT_IN_GROUP_BY_CLAUSE" : {
+  "COLUMN_ALREADY_EXISTS" : {
     "message" : [
-      "The expression <expression> is neither present in the group by, nor is it an aggregate function. Add to group by or wrap in `first()` (or `first_value()`) if you don't care which value you get."
-    ],
-    "sqlState" : "42000"
+      "The column <columnName> already exists. Consider to choose another name or rename the existing column."
+    ]
+  },
+  "COLUMN_NOT_FOUND" : {
+    "message" : [
+      "The column <colName> cannot be found. Verify the spelling and correctness of the column name according to the SQL config <caseSensitiveConfig>."
+    ]
   },
   "CONCURRENT_QUERY" : {
     "message" : [
@@ -118,6 +143,16 @@
       "INTERCEPTOR_RUNTIME_ERROR" : {
         "message" : [
           "Error instantiating GRPC interceptor: <msg>"
+        ]
+      },
+      "PLUGIN_CTOR_MISSING" : {
+        "message" : [
+          "Cannot instantiate Spark Connect plugin because <cls> is missing a default constructor without arguments."
+        ]
+      },
+      "PLUGIN_RUNTIME_ERROR" : {
+        "message" : [
+          "Error instantiating Spark Connect plugin: <msg>"
         ]
       }
     }
@@ -188,7 +223,7 @@
           "If you have to cast <srcType> to <targetType>, you can set <config> as <configVal>."
         ]
       },
-      "CAST_WITH_FUN_SUGGESTION" : {
+      "CAST_WITH_FUNC_SUGGESTION" : {
         "message" : [
           "cannot cast <srcType> to <targetType>.",
           "To convert values from <srcType> to <targetType>, you can use the functions <functionNames> instead."
@@ -214,49 +249,19 @@
           "Input to <functionName> should all be the same type, but it's <dataType>."
         ]
       },
-      "FORMAT_CONT_THOUSANDS_SEPS" : {
-        "message" : [
-          "Thousands separators (, or G) must have digits in between them in the number format: <format>."
-        ]
-      },
-      "FORMAT_CUR_MUST_BEFORE_DEC" : {
-        "message" : [
-          "Currency characters must appear before any decimal point in the number format: <format>."
-        ]
-      },
-      "FORMAT_CUR_MUST_BEFORE_DIGIT" : {
-        "message" : [
-          "Currency characters must appear before digits in the number format: <format>."
-        ]
-      },
-      "FORMAT_EMPTY" : {
-        "message" : [
-          "The number format string cannot be empty."
-        ]
-      },
-      "FORMAT_THOUSANDS_SEPS_MUST_BEFORE_DEC" : {
-        "message" : [
-          "Thousands separators (, or G) may not appear after the decimal point in the number format: <format>."
-        ]
-      },
-      "FORMAT_UNEXPECTED_TOKEN" : {
-        "message" : [
-          "Unexpected <token> found in the format string <format>; the structure of the format string must match: [MI|S] [$] [0|9|G|,]* [.|D] [0|9]* [$] [PR|MI|S]."
-        ]
-      },
-      "FORMAT_WRONG_NUM_DIGIT" : {
-        "message" : [
-          "The format string requires at least one number digit."
-        ]
-      },
-      "FORMAT_WRONG_NUM_TOKEN" : {
-        "message" : [
-          "At most one <token> is allowed in the number format: <format>."
-        ]
-      },
       "HASH_MAP_TYPE" : {
         "message" : [
           "Input to the function <functionName> cannot contain elements of the \"MAP\" type. In Spark, same maps may have different hashcode, thus hash expressions are prohibited on \"MAP\" elements. To restore previous behavior set \"spark.sql.legacy.allowHashOnMapType\" to \"true\"."
+        ]
+      },
+      "INPUT_SIZE_NOT_ONE" : {
+        "message" : [
+          "Length of <exprName> should be 1"
+        ]
+      },
+      "INVALID_ARG_VALUE" : {
+        "message" : [
+          "The <inputName> value must to be a <requireType> literal of <validValues>, but got <inputValue>."
         ]
       },
       "INVALID_JSON_MAP_KEY_TYPE" : {
@@ -384,7 +389,7 @@
       },
       "UNEXPECTED_INPUT_TYPE" : {
         "message" : [
-          "parameter <paramIndex> requires <requiredType> type, however, <inputSql> is of <inputType> type."
+          "Parameter <paramIndex> requires the <requiredType> type, however <inputSql> has the type <inputType>."
         ]
       },
       "UNEXPECTED_NULL" : {
@@ -436,6 +441,11 @@
     ],
     "sqlState" : "42000"
   },
+  "DATA_SOURCE_NOT_FOUND" : {
+    "message" : [
+      "Failed to find the data source: <provider>. Please find packages at `https://spark.apache.org/third-party-projects.html`."
+    ]
+  },
   "DATETIME_OVERFLOW" : {
     "message" : [
       "Datetime operation overflow: <operation>."
@@ -469,9 +479,19 @@
       "The index 0 is invalid. An index shall be either < 0 or > 0 (the first element has index 1)."
     ]
   },
+  "ENCODER_NOT_FOUND" : {
+    "message" : [
+      "Not found an encoder of the type <typeName> to Spark SQL internal representation. Consider to change the input type to one of supported at https://spark.apache.org/docs/latest/sql-ref-datatypes.html."
+    ]
+  },
   "FAILED_EXECUTE_UDF" : {
     "message" : [
       "Failed to execute user defined function (<functionName>: (<signature>) => <result>)"
+    ]
+  },
+  "FAILED_FUNCTION_CALL" : {
+    "message" : [
+      "Failed preparing of the function <funcName> for call. Please, double check function's arguments."
     ]
   },
   "FAILED_RENAME_PATH" : {
@@ -656,11 +676,78 @@
     ],
     "sqlState" : "42000"
   },
+  "INVALID_EMPTY_LOCATION" : {
+    "message" : [
+      "The location name cannot be empty string, but `<location>` was given."
+    ]
+  },
+  "INVALID_EXTRACT_FIELD" : {
+    "message" : [
+      "Cannot extract <field> from <expr>."
+    ]
+  },
   "INVALID_FIELD_NAME" : {
     "message" : [
       "Field name <fieldName> is invalid: <path> is not a struct."
     ],
     "sqlState" : "42000"
+  },
+  "INVALID_FORMAT" : {
+    "message" : [
+      "The format is invalid: <format>."
+    ],
+    "subClass" : {
+      "CONT_THOUSANDS_SEPS" : {
+        "message" : [
+          "Thousands separators (, or G) must have digits in between them in the number format."
+        ]
+      },
+      "CUR_MUST_BEFORE_DEC" : {
+        "message" : [
+          "Currency characters must appear before any decimal point in the number format."
+        ]
+      },
+      "CUR_MUST_BEFORE_DIGIT" : {
+        "message" : [
+          "Currency characters must appear before digits in the number format."
+        ]
+      },
+      "EMPTY" : {
+        "message" : [
+          "The number format string cannot be empty."
+        ]
+      },
+      "ESC_AT_THE_END" : {
+        "message" : [
+          "The escape character is not allowed to end with."
+        ]
+      },
+      "ESC_IN_THE_MIDDLE" : {
+        "message" : [
+          "The escape character is not allowed to precede <char>."
+        ]
+      },
+      "THOUSANDS_SEPS_MUST_BEFORE_DEC" : {
+        "message" : [
+          "Thousands separators (, or G) may not appear after the decimal point in the number format."
+        ]
+      },
+      "UNEXPECTED_TOKEN" : {
+        "message" : [
+          "Found the unexpected <token> in the format string; the structure of the format string must match: [MI|S] [$] [0|9|G|,]* [.|D] [0|9]* [$] [PR|MI|S]."
+        ]
+      },
+      "WRONG_NUM_DIGIT" : {
+        "message" : [
+          "The format string requires at least one number digit."
+        ]
+      },
+      "WRONG_NUM_TOKEN" : {
+        "message" : [
+          "At most one <token> is allowed in the number format."
+        ]
+      }
+    }
   },
   "INVALID_FRACTION_OF_SECOND" : {
     "message" : [
@@ -673,6 +760,11 @@
       "The identifier <ident> is invalid. Please, consider quoting it with back-quotes as `<ident>`."
     ]
   },
+  "INVALID_JSON_ROOT_FIELD" : {
+    "message" : [
+      "Cannot convert JSON root field to target Spark type."
+    ]
+  },
   "INVALID_JSON_SCHEMA_MAP_TYPE" : {
     "message" : [
       "Input schema <jsonSchema> can only contain STRING as a key type for a MAP."
@@ -683,19 +775,19 @@
       "The <joinType> JOIN with LATERAL correlation is not allowed because an OUTER subquery cannot correlate to its join partner. Remove the LATERAL correlation or use an INNER JOIN, or LEFT OUTER JOIN instead."
     ]
   },
-  "INVALID_LIKE_PATTERN" : {
+  "INVALID_OPTIONS" : {
     "message" : [
-      "The pattern <pattern> is invalid."
+      "Invalid options:"
     ],
     "subClass" : {
-      "ESC_AT_THE_END" : {
+      "NON_MAP_FUNCTION" : {
         "message" : [
-          "the escape character is not allowed to end with."
+          "Must use the `map()` function for options."
         ]
       },
-      "ESC_IN_THE_MIDDLE" : {
+      "NON_STRING_TYPE" : {
         "message" : [
-          "the escape character is not allowed to precede <char>."
+          "A type of keys and values in `map()` must be string, but got <mapType>."
         ]
       }
     }
@@ -707,8 +799,30 @@
   },
   "INVALID_PARAMETER_VALUE" : {
     "message" : [
-      "The value of parameter(s) '<parameter>' in <functionName> is invalid: <expected>"
+      "The value of parameter(s) <parameter> in <functionName> is invalid:"
     ],
+    "subClass" : {
+      "AES_KEY" : {
+        "message" : [
+          "detail message: <detailMessage>"
+        ]
+      },
+      "AES_KEY_LENGTH" : {
+        "message" : [
+          "expects a binary value with 16, 24 or 32 bytes, but got <actualLength> bytes."
+        ]
+      },
+      "PATTERN" : {
+        "message" : [
+          "<value>"
+        ]
+      },
+      "ZERO_INDEX" : {
+        "message" : [
+          "expects %1$, %2$ and so on, but got %0$."
+        ]
+      }
+    },
     "sqlState" : "22023"
   },
   "INVALID_PROPERTY_KEY" : {
@@ -721,9 +835,32 @@
       "<value> is an invalid property value, please use quotes, e.g. SET <key>=<value>"
     ]
   },
-  "INVALID_PROTOBUF_MESSAGE_TYPE" : {
+  "INVALID_SCHEMA" : {
     "message" : [
-      "<protobufClassName> is not a Protobuf message type"
+      "The input schema <inputSchema> is not a valid schema string."
+    ],
+    "subClass" : {
+      "NON_STRING_LITERAL" : {
+        "message" : [
+          "The input expression must be string literal and not null."
+        ]
+      },
+      "NON_STRUCT_TYPE" : {
+        "message" : [
+          "The input expression should be evaluated to struct type, but got <dataType>."
+        ]
+      },
+      "PARSE_ERROR" : {
+        "message" : [
+          "Cannot parse the schema:",
+          "<reason>"
+        ]
+      }
+    }
+  },
+  "INVALID_SQL_ARG" : {
+    "message" : [
+      "The argument <name> of `sql()` is invalid. Consider to replace it by a SQL literal."
     ]
   },
   "INVALID_SQL_SYNTAX" : {
@@ -744,6 +881,12 @@
       }
     }
   },
+  "INVALID_TYPED_LITERAL" : {
+    "message" : [
+      "The value of the typed literal <valueType> is invalid: <value>."
+    ],
+    "sqlState" : "42000"
+  },
   "INVALID_WHERE_CONDITION" : {
     "message" : [
       "The WHERE condition <condition> contains invalid expressions: <expressionList>.",
@@ -758,6 +901,18 @@
   "MALFORMED_PROTOBUF_MESSAGE" : {
     "message" : [
       "Malformed Protobuf messages are detected in message deserialization. Parse Mode: <failFastMode>. To process malformed protobuf message as null result, try setting the option 'mode' as 'PERMISSIVE'."
+    ]
+  },
+  "MISSING_AGGREGATION" : {
+    "message" : [
+      "The non-aggregating expression <expression> is based on columns which are not participating in the GROUP BY clause.",
+      "Add the columns or the expression to the GROUP BY, aggregate the expression, or use <expressionAnyValue> if you do not care which of the values within a group is returned."
+    ],
+    "sqlState" : "42000"
+  },
+  "MISSING_GROUP_BY" : {
+    "message" : [
+      "The query does not include a GROUP BY clause. Add GROUP BY or turn it into the window functions using OVER clauses."
     ]
   },
   "MISSING_STATIC_PARTITION_COLUMN" : {
@@ -838,15 +993,25 @@
       "The comparison result is null. If you want to handle null as 0 (equal), you can set \"spark.sql.legacy.allowNullComparisonResultInArraySort\" to \"true\"."
     ]
   },
+  "NULL_MAP_KEY" : {
+    "message" : [
+      "Cannot use null as map key."
+    ]
+  },
+  "NUMERIC_OUT_OF_SUPPORTED_RANGE" : {
+    "message" : [
+      "The value <value> cannot be interpreted as a numeric since it has more than 38 digits."
+    ]
+  },
   "NUMERIC_VALUE_OUT_OF_RANGE" : {
     "message" : [
-      "<value> cannot be represented as Decimal(<precision>, <scale>). If necessary set <config> to \"false\" to bypass this error."
+      "<value> cannot be represented as Decimal(<precision>, <scale>). If necessary set <config> to \"false\" to bypass this error, and return NULL instead."
     ],
     "sqlState" : "22005"
   },
   "NUM_COLUMNS_MISMATCH" : {
     "message" : [
-      "<operator> can only be performed on tables with the same number of columns, but the first table has <refNumColumns> columns and the <invalidOrdinalNum> table has <invalidNumColumns> columns."
+      "<operator> can only be performed on inputs with the same number of columns, but the first input has <firstNumColumns> columns and the <invalidOrdinalNum> input has <invalidNumColumns> columns."
     ]
   },
   "ORDER_BY_POS_OUT_OF_RANGE" : {
@@ -854,11 +1019,6 @@
       "ORDER BY position <index> is not in select list (valid range is [1, <size>])."
     ],
     "sqlState" : "42000"
-  },
-  "OUT_OF_DECIMAL_TYPE_RANGE" : {
-    "message" : [
-      "Out of decimal type range: <value>."
-    ]
   },
   "PARSE_EMPTY_STATEMENT" : {
     "message" : [
@@ -886,6 +1046,11 @@
       "To tolerate the error on drop use ALTER TABLE … DROP IF EXISTS PARTITION."
     ],
     "sqlState" : "42000"
+  },
+  "PATH_NOT_FOUND" : {
+    "message" : [
+      "Path does not exist: <path>."
+    ]
   },
   "PIVOT_VALUE_DATA_TYPE_MISMATCH" : {
     "message" : [
@@ -930,7 +1095,7 @@
   },
   "RECURSIVE_PROTOBUF_SCHEMA" : {
     "message" : [
-      "Found recursive reference in Protobuf schema, which can not be processed by Spark: <fieldDescriptor>"
+      "Found recursive reference in Protobuf schema, which can not be processed by Spark by default: <fieldDescriptor>. try setting the option `recursive.fields.max.depth` 0 to 10. Going beyond 10 levels of recursion is not allowed."
     ]
   },
   "RENAME_SRC_PATH_NOT_FOUND" : {
@@ -997,6 +1162,11 @@
       "Star (*) is not allowed in a select list when GROUP BY an ordinal position is used."
     ]
   },
+  "STATIC_PARTITION_COLUMN_IN_INSERT_COLUMN_LIST" : {
+    "message" : [
+      "Static partition column <staticName> is also specified in the column list."
+    ]
+  },
   "STREAM_FAILED" : {
     "message" : [
       "Query [id = <id>, runId = <runId>] terminated with exception: <message>"
@@ -1017,12 +1187,22 @@
     ],
     "sqlState" : "42000"
   },
+  "TASK_WRITE_FAILED" : {
+    "message" : [
+      "Task failed while writing rows to <path>."
+    ]
+  },
   "TEMP_TABLE_OR_VIEW_ALREADY_EXISTS" : {
     "message" : [
       "Cannot create the temporary view <relationName> because it already exists.",
       "Choose a different name, drop or replace the existing view,  or add the IF NOT EXISTS clause to tolerate pre-existing views."
     ],
     "sqlState" : "42000"
+  },
+  "TEMP_VIEW_NAME_TOO_MANY_NAME_PARTS" : {
+    "message" : [
+      "CREATE TEMPORARY VIEW or the corresponding Dataset APIs only accept single-part view names, but got: <actualName>"
+    ]
   },
   "TOO_MANY_ARRAY_ELEMENTS" : {
     "message" : [
@@ -1039,9 +1219,19 @@
       "Unable to convert SQL type <toType> to Protobuf type <protobufType>."
     ]
   },
+  "UNBOUND_SQL_PARAMETER" : {
+    "message" : [
+      "Found the unbound parameter: <name>. Please, fix `args` and provide a mapping of the parameter to a SQL literal."
+    ]
+  },
   "UNCLOSED_BRACKETED_COMMENT" : {
     "message" : [
       "Found an unclosed bracketed comment. Please, append */ at the end of the comment."
+    ]
+  },
+  "UNEXPECTED_INPUT_TYPE" : {
+    "message" : [
+      "Parameter <paramIndex> of function <functionName> requires the <requiredType> type, however <inputSql> has the type <inputType>."
     ]
   },
   "UNKNOWN_PROTOBUF_MESSAGE_TYPE" : {
@@ -1076,6 +1266,12 @@
   "UNRECOGNIZED_SQL_TYPE" : {
     "message" : [
       "Unrecognized SQL type <typeName>"
+    ],
+    "sqlState" : "42000"
+  },
+  "UNRESOLVED_ALL_IN_GROUP_BY" : {
+    "message" : [
+      "Cannot infer grouping columns for GROUP BY ALL based on the select clause. Please explicitly specify the grouping columns."
     ],
     "sqlState" : "42000"
   },
@@ -1117,7 +1313,7 @@
   },
   "UNRESOLVED_MAP_KEY" : {
     "message" : [
-      "Cannot resolve column <objectName> as a map key. If the key is a string literal, please add single quotes around it."
+      "Cannot resolve column <objectName> as a map key. If the key is a string literal, add the single quotes '' around it."
     ],
     "subClass" : {
       "WITHOUT_SUGGESTION" : {
@@ -1133,10 +1329,11 @@
     },
     "sqlState" : "42000"
   },
-  "UNSCALED_VALUE_TOO_LARGE_FOR_PRECISION" : {
+  "UNRESOLVED_ROUTINE" : {
     "message" : [
-      "Unscaled value too large for precision. If necessary set <ansiConfig> to false to bypass this error."
-    ]
+      "Cannot resolve function <routineName> on search path <searchPath>."
+    ],
+    "sqlState" : "42000"
   },
   "UNSUPPORTED_DATATYPE" : {
     "message" : [
@@ -1161,11 +1358,6 @@
       }
     }
   },
-  "UNSUPPORTED_EMPTY_LOCATION" : {
-    "message" : [
-      "Unsupported empty location."
-    ]
-  },
   "UNSUPPORTED_FEATURE" : {
     "message" : [
       "The feature is not supported:"
@@ -1176,19 +1368,34 @@
           "AES-<mode> with the padding <padding> by the <functionName> function."
         ]
       },
+      "ANALYZE_UNCACHED_TEMP_VIEW" : {
+        "message" : [
+          "The ANALYZE TABLE FOR COLUMNS command can operate on temporary views that have been cached already. Consider to cache the view <viewName>."
+        ]
+      },
+      "ANALYZE_UNSUPPORTED_COLUMN_TYPE" : {
+        "message" : [
+          "The ANALYZE TABLE FOR COLUMNS command does not support the type <columnType> of the column <columnName> in the table <tableName>."
+        ]
+      },
+      "ANALYZE_VIEW" : {
+        "message" : [
+          "The ANALYZE TABLE command does not support views."
+        ]
+      },
       "CATALOG_OPERATION" : {
         "message" : [
           "Catalog <catalogName> does not support <operation>."
         ]
       },
+      "COMBINATION_QUERY_RESULT_CLAUSES" : {
+        "message" : [
+          "Combination of ORDER BY/SORT BY/DISTRIBUTE BY/CLUSTER BY."
+        ]
+      },
       "DESC_TABLE_COLUMN_PARTITION" : {
         "message" : [
           "DESC TABLE COLUMN for a specific partition."
-        ]
-      },
-      "DISTRIBUTE_BY" : {
-        "message" : [
-          "DISTRIBUTE BY clause."
         ]
       },
       "INSERT_PARTITION_SPEC_IF_NOT_EXISTS" : {
@@ -1199,6 +1406,11 @@
       "JDBC_TRANSACTION" : {
         "message" : [
           "The target JDBC server does not support transactions and can only support ALTER TABLE with a single action."
+        ]
+      },
+      "LATERAL_COLUMN_ALIAS_IN_AGGREGATE_FUNC" : {
+        "message" : [
+          "Referencing a lateral column alias <lca> in the aggregate function <aggFunc>."
         ]
       },
       "LATERAL_JOIN_USING" : {
@@ -1248,7 +1460,7 @@
       },
       "PYTHON_UDF_IN_ON_CLAUSE" : {
         "message" : [
-          "Python UDF in the ON clause of a <joinType> JOIN."
+          "Python UDF in the ON clause of a <joinType> JOIN. In case of an INNNER JOIN consider rewriting to a CROSS JOIN with a WHERE clause."
         ]
       },
       "REPEATED_PIVOT" : {
@@ -1368,6 +1580,11 @@
           "A correlated outer name reference within a subquery expression body was not found in the enclosing query: <value>"
         ]
       },
+      "CORRELATED_REFERENCE" : {
+        "message" : [
+          "Expressions referencing the outer query are not supported outside of WHERE/HAVING clauses: <sqlExprs>"
+        ]
+      },
       "LATERAL_JOIN_CONDITION_NON_DETERMINISTIC" : {
         "message" : [
           "Lateral join condition cannot be non-deterministic: <condition>"
@@ -1391,11 +1608,6 @@
       "NON_DETERMINISTIC_LATERAL_SUBQUERIES" : {
         "message" : [
           "Non-deterministic lateral subqueries are not supported when joining with outer relations that produce more than one row<treeNode>"
-        ]
-      },
-      "UNSUPPORTED_CORRELATED_REFERENCE" : {
-        "message" : [
-          "Expressions referencing the outer query are not supported outside of WHERE/HAVING clauses<treeNode>"
         ]
       },
       "UNSUPPORTED_CORRELATED_REFERENCE_DATA_TYPE" : {
@@ -1428,6 +1640,43 @@
       "3. set \"spark.sql.legacy.allowUntypedScalaUDF\" to \"true\" and use this API with caution"
     ]
   },
+  "VIEW_ALREADY_EXISTS" : {
+    "message" : [
+      "Cannot create view <relationName> because it already exists.",
+      "Choose a different name, drop or replace the existing object, or add the IF NOT EXISTS clause to tolerate pre-existing objects."
+    ],
+    "sqlState" : "42000"
+  },
+  "VIEW_NOT_FOUND" : {
+    "message" : [
+      "The view <relationName> cannot be found. Verify the spelling and correctness of the schema and catalog.",
+      "If you did not qualify the name with a schema, verify the current_schema() output, or qualify the name with the correct schema and catalog.",
+      "To tolerate the error on drop use DROP VIEW IF EXISTS."
+    ],
+    "sqlState" : "42000"
+  },
+  "WRITE_STREAM_NOT_ALLOWED" : {
+    "message" : [
+      "`writeStream` can be called only on streaming Dataset/DataFrame."
+    ]
+  },
+  "WRONG_NUM_ARGS" : {
+    "message" : [
+      "Invalid number of arguments for the function <functionName>."
+    ],
+    "subClass" : {
+      "WITHOUT_SUGGESTION" : {
+        "message" : [
+          "Please, refer to 'https://spark.apache.org/docs/latest/sql-ref-functions.html' for a fix."
+        ]
+      },
+      "WITH_SUGGESTION" : {
+        "message" : [
+          "Consider to change the number of arguments because the function requires <expectedNum> parameters but the actual number is <actualNum>."
+        ]
+      }
+    }
+  },
   "_LEGACY_ERROR_TEMP_0001" : {
     "message" : [
       "Invalid InsertIntoContext"
@@ -1456,11 +1705,6 @@
   "_LEGACY_ERROR_TEMP_0008" : {
     "message" : [
       "There must be at least one WHEN clause in a MERGE statement."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_0011" : {
-    "message" : [
-      "Combination of ORDER BY/SORT BY/DISTRIBUTE BY/CLUSTER BY is not supported."
     ]
   },
   "_LEGACY_ERROR_TEMP_0012" : {
@@ -1498,21 +1742,6 @@
       "Function trim doesn't support with type <trimOption>. Please use BOTH, LEADING or TRAILING as trim type."
     ]
   },
-  "_LEGACY_ERROR_TEMP_0019" : {
-    "message" : [
-      "Cannot parse the <valueType> value: <value>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_0020" : {
-    "message" : [
-      "Cannot parse the INTERVAL value: <value>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_0022" : {
-    "message" : [
-      "<msg>."
-    ]
-  },
   "_LEGACY_ERROR_TEMP_0023" : {
     "message" : [
       "Numeric literal <rawStrippedQualifier> does not fit in range [<minValue>, <maxValue>] for type <typeName>."
@@ -1546,11 +1775,6 @@
   "_LEGACY_ERROR_TEMP_0029" : {
     "message" : [
       "Cannot mix year-month and day-time fields: <literal>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_0030" : {
-    "message" : [
-      "DataType <dataType> is not supported."
     ]
   },
   "_LEGACY_ERROR_TEMP_0031" : {
@@ -1661,11 +1885,6 @@
   "_LEGACY_ERROR_TEMP_0053" : {
     "message" : [
       "It is not allowed to define a TEMPORARY view with IF NOT EXISTS."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_0054" : {
-    "message" : [
-      "It is not allowed to add database prefix `<database>` for the TEMPORARY view name."
     ]
   },
   "_LEGACY_ERROR_TEMP_0056" : {
@@ -1910,26 +2129,6 @@
       "Gap duration expression used in session window must be CalendarIntervalType, but got <dt>."
     ]
   },
-  "_LEGACY_ERROR_TEMP_1041" : {
-    "message" : [
-      "Undefined function <name>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1042" : {
-    "message" : [
-      "Invalid number of arguments for function <name>. Expected: <expectedInfo>; Found: <actualNumber>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1043" : {
-    "message" : [
-      "Invalid arguments for function <name>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1044" : {
-    "message" : [
-      "Function <name> accepts only one argument."
-    ]
-  },
   "_LEGACY_ERROR_TEMP_1045" : {
     "message" : [
       "ALTER TABLE SET LOCATION does not support partition for v2 tables."
@@ -2010,11 +2209,6 @@
       "<command> does not support nested column: <column>."
     ]
   },
-  "_LEGACY_ERROR_TEMP_1061" : {
-    "message" : [
-      "Column <colName> does not exist."
-    ]
-  },
   "_LEGACY_ERROR_TEMP_1065" : {
     "message" : [
       "`<name>` is not a valid name for tables/databases. Valid names only contain alphabet characters, numbers and _."
@@ -2063,11 +2257,6 @@
   "_LEGACY_ERROR_TEMP_1076" : {
     "message" : [
       "Partition spec is invalid. <details>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1078" : {
-    "message" : [
-      "Can not load class '<className>' when registering the function '<func>', please make sure it is on the classpath."
     ]
   },
   "_LEGACY_ERROR_TEMP_1079" : {
@@ -2135,31 +2324,6 @@
       "Cannot read table property '<key>' as it's corrupted.<details>."
     ]
   },
-  "_LEGACY_ERROR_TEMP_1092" : {
-    "message" : [
-      "The expression '<expr>' is not a valid schema string."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1093" : {
-    "message" : [
-      "Schema should be specified in DDL format as a string literal or output of the schema_of_json/schema_of_csv functions instead of <expr>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1094" : {
-    "message" : [
-      "Schema should be struct type but got <dataType>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1095" : {
-    "message" : [
-      "A type of keys and values in map() must be string, but got <map>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1096" : {
-    "message" : [
-      "Must use a map() function for options."
-    ]
-  },
   "_LEGACY_ERROR_TEMP_1097" : {
     "message" : [
       "The field for corrupt records must be string type and nullable."
@@ -2178,16 +2342,6 @@
   "_LEGACY_ERROR_TEMP_1100" : {
     "message" : [
       "The '<argName>' parameter of function '<funcName>' needs to be a <requiredType> literal."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1101" : {
-    "message" : [
-      "Invalid value for the '<argName>' parameter of function '<funcName>': <invalidValue>.<endingMsg>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1102" : {
-    "message" : [
-      "Literals of type '<field>' are currently not supported for the <srcDataType> type."
     ]
   },
   "_LEGACY_ERROR_TEMP_1103" : {
@@ -2305,11 +2459,6 @@
   "_LEGACY_ERROR_TEMP_1129" : {
     "message" : [
       "Unable to infer schema for <format>. It must be specified manually."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1130" : {
-    "message" : [
-      "Path does not exist: <path>."
     ]
   },
   "_LEGACY_ERROR_TEMP_1131" : {
@@ -2562,18 +2711,6 @@
       "The number of partitions can't be specified with unspecified distribution. Invalid writer requirements detected."
     ]
   },
-  "_LEGACY_ERROR_TEMP_1179" : {
-    "message" : [
-      "Table-valued function <name> with alternatives: <usage>",
-      "cannot be applied to (<arguments>): <details>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1180" : {
-    "message" : [
-      "Incompatible input data type.",
-      "Expected: <expectedDataType>; Found: <foundDataType>."
-    ]
-  },
   "_LEGACY_ERROR_TEMP_1181" : {
     "message" : [
       "Stream-stream join without equality predicate is not supported."
@@ -2802,12 +2939,6 @@
       "The SQL config '<configName>' was removed in the version <version>. <comment>"
     ]
   },
-  "_LEGACY_ERROR_TEMP_1227" : {
-    "message" : [
-      "<msg><e1>",
-      "Failed fallback parsing: <e2>"
-    ]
-  },
   "_LEGACY_ERROR_TEMP_1228" : {
     "message" : [
       "Decimal scale (<scale>) cannot be greater than precision (<precision>)."
@@ -2818,11 +2949,6 @@
       "<decimalType> can only support precision up to <precision>."
     ]
   },
-  "_LEGACY_ERROR_TEMP_1230" : {
-    "message" : [
-      "Negative scale is not allowed: <scale>. You can use <config>=true to enable legacy mode to allow it."
-    ]
-  },
   "_LEGACY_ERROR_TEMP_1231" : {
     "message" : [
       "<key> is not a valid partition column in table <tblName>."
@@ -2831,26 +2957,6 @@
   "_LEGACY_ERROR_TEMP_1232" : {
     "message" : [
       "Partition spec is invalid. The spec (<specKeys>) must match the partition spec (<partitionColumnNames>) defined in table '<tableName>'."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1233" : {
-    "message" : [
-      "Found duplicate column(s) <colType>: <duplicateCol>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1234" : {
-    "message" : [
-      "Temporary view <tableIdent> is not cached for analyzing columns."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1235" : {
-    "message" : [
-      "Column <name> in table <tableIdent> is of type <dataType>, and Spark does not support statistics collection on this column type."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1236" : {
-    "message" : [
-      "ANALYZE TABLE is not supported on views."
     ]
   },
   "_LEGACY_ERROR_TEMP_1237" : {
@@ -2866,16 +2972,6 @@
   "_LEGACY_ERROR_TEMP_1241" : {
     "message" : [
       "CREATE-TABLE-AS-SELECT cannot create table with location to a non-empty directory <tablePath>. To allow overwriting the existing non-empty directory, set '<config>' to true."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1242" : {
-    "message" : [
-      "Undefined function: <rawName>. This function is neither a built-in/temporary function, nor a persistent function that is qualified as <fullName>."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_1243" : {
-    "message" : [
-      "Undefined function: <rawName>"
     ]
   },
   "_LEGACY_ERROR_TEMP_1244" : {
@@ -3472,11 +3568,6 @@
       "class `<cls>` is not supported by `MapObjects` as resulting collection."
     ]
   },
-  "_LEGACY_ERROR_TEMP_2019" : {
-    "message" : [
-      "Cannot use null as map key!"
-    ]
-  },
   "_LEGACY_ERROR_TEMP_2020" : {
     "message" : [
       "Couldn't find a valid constructor on <cls>"
@@ -3632,11 +3723,6 @@
       "Expected exactly one path to be specified, but got: <paths>"
     ]
   },
-  "_LEGACY_ERROR_TEMP_2051" : {
-    "message" : [
-      "Failed to find data source: <provider>. Please find packages at https://spark.apache.org/third-party-projects.html"
-    ]
-  },
   "_LEGACY_ERROR_TEMP_2052" : {
     "message" : [
       "<className> was removed in Spark 2.0. Please check if your library is compatible with Spark 2.0"
@@ -3645,11 +3731,6 @@
   "_LEGACY_ERROR_TEMP_2053" : {
     "message" : [
       "buildReader is not supported for <format>"
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_2054" : {
-    "message" : [
-      "Task failed while writing rows."
     ]
   },
   "_LEGACY_ERROR_TEMP_2055" : {
@@ -4046,16 +4127,6 @@
       "Failed to parse an empty string for data type <dataType>"
     ]
   },
-  "_LEGACY_ERROR_TEMP_2136" : {
-    "message" : [
-      "Failed to parse field name <fieldName>, field value <fieldValue>, [<token>] to target spark data type [<dataType>]."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_2137" : {
-    "message" : [
-      "Root converter returned null"
-    ]
-  },
   "_LEGACY_ERROR_TEMP_2138" : {
     "message" : [
       "Cannot have circular references in bean class, but got the circular reference of class <clazz>"
@@ -4072,20 +4143,9 @@
       "<walkedTypePath>"
     ]
   },
-  "_LEGACY_ERROR_TEMP_2141" : {
-    "message" : [
-      "No Encoder found for <tpe>",
-      "<walkedTypePath>"
-    ]
-  },
   "_LEGACY_ERROR_TEMP_2142" : {
     "message" : [
       "Attributes for type <schema> is not supported"
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_2143" : {
-    "message" : [
-      "Schema for type <tpe> is not supported"
     ]
   },
   "_LEGACY_ERROR_TEMP_2144" : {
@@ -4251,7 +4311,7 @@
   },
   "_LEGACY_ERROR_TEMP_2175" : {
     "message" : [
-      "Rule id not found for <ruleName>"
+      "Rule id not found for <ruleName>. Please modify RuleIdCollection.scala if you are adding a new rule."
     ]
   },
   "_LEGACY_ERROR_TEMP_2176" : {
@@ -4854,11 +4914,6 @@
       "cannot resolve <sqlExpr> in MERGE command given columns [<cols>]"
     ]
   },
-  "_LEGACY_ERROR_TEMP_2310" : {
-    "message" : [
-      "'writeStream' can be called only on streaming Dataset/DataFrame"
-    ]
-  },
   "_LEGACY_ERROR_TEMP_2311" : {
     "message" : [
       "'writeTo' can not be called on streaming Dataset/DataFrame"
@@ -5072,11 +5127,6 @@
   "_LEGACY_ERROR_TEMP_2421" : {
     "message" : [
       "nondeterministic expression <sqlExpr> should not appear in the arguments of an aggregate function."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_2422" : {
-    "message" : [
-      "grouping expressions sequence is empty, and '<sqlExpr>' is not an aggregate function. Wrap '<aggExprs>' in windowing function(s) or wrap '<sqlExpr>' in first() (or first_value) if you don't care which value you get."
     ]
   },
   "_LEGACY_ERROR_TEMP_2423" : {
