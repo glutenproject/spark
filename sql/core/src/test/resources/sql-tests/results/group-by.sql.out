@@ -16,17 +16,13 @@ struct<>
 -- !query output
 org.apache.spark.sql.AnalysisException
 {
-  "errorClass" : "_LEGACY_ERROR_TEMP_2422",
-  "messageParameters" : {
-    "aggExprs" : "(count(testdata.b) AS `count(b)`)",
-    "sqlExpr" : "testdata.a"
-  },
+  "errorClass" : "MISSING_GROUP_BY",
   "queryContext" : [ {
     "objectType" : "",
     "objectName" : "",
-    "startIndex" : 8,
-    "stopIndex" : 8,
-    "fragment" : "a"
+    "startIndex" : 1,
+    "stopIndex" : 32,
+    "fragment" : "SELECT a, COUNT(b) FROM testData"
   } ]
 }
 
@@ -57,10 +53,11 @@ struct<>
 -- !query output
 org.apache.spark.sql.AnalysisException
 {
-  "errorClass" : "COLUMN_NOT_IN_GROUP_BY_CLAUSE",
+  "errorClass" : "MISSING_AGGREGATION",
   "sqlState" : "42000",
   "messageParameters" : {
-    "expression" : "\"a\""
+    "expression" : "\"a\"",
+    "expressionAnyValue" : "\"any_value(a)\""
   }
 }
 
@@ -127,10 +124,11 @@ struct<>
 -- !query output
 org.apache.spark.sql.AnalysisException
 {
-  "errorClass" : "COLUMN_NOT_IN_GROUP_BY_CLAUSE",
+  "errorClass" : "MISSING_AGGREGATION",
   "sqlState" : "42000",
   "messageParameters" : {
-    "expression" : "\"a\""
+    "expression" : "\"a\"",
+    "expressionAnyValue" : "\"any_value(a)\""
   }
 }
 
@@ -243,10 +241,11 @@ struct<>
 -- !query output
 org.apache.spark.sql.AnalysisException
 {
-  "errorClass" : "COLUMN_NOT_IN_GROUP_BY_CLAUSE",
+  "errorClass" : "MISSING_AGGREGATION",
   "sqlState" : "42000",
   "messageParameters" : {
-    "expression" : "\"k\""
+    "expression" : "\"k\"",
+    "expressionAnyValue" : "\"any_value(k)\""
   }
 }
 
@@ -352,17 +351,13 @@ struct<>
 -- !query output
 org.apache.spark.sql.AnalysisException
 {
-  "errorClass" : "_LEGACY_ERROR_TEMP_2422",
-  "messageParameters" : {
-    "aggExprs" : "()",
-    "sqlExpr" : "id"
-  },
+  "errorClass" : "MISSING_GROUP_BY",
   "queryContext" : [ {
     "objectType" : "",
     "objectName" : "",
-    "startIndex" : 16,
-    "stopIndex" : 24,
-    "fragment" : "range(10)"
+    "startIndex" : 1,
+    "stopIndex" : 38,
+    "fragment" : "SELECT id FROM range(10) HAVING id > 0"
   } ]
 }
 

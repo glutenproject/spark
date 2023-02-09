@@ -22,7 +22,6 @@ import java.net.{URI, URL}
 import java.sql.{Connection, Driver, DriverManager, PreparedStatement, ResultSet, ResultSetMetaData}
 import java.util.{Locale, Properties, ServiceConfigurationError}
 
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{LocalFileSystem, Path}
 import org.apache.hadoop.fs.permission.FsPermission
 import org.mockito.Mockito.{mock, spy, when}
@@ -36,7 +35,6 @@ import org.apache.spark.sql.execution.datasources.orc.OrcTest
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.execution.datasources.v2.jdbc.JDBCTableCatalog
 import org.apache.spark.sql.execution.streaming.FileSystemBasedCheckpointFileManager
-import org.apache.spark.sql.execution.streaming.state.RenameReturnsFalseFileSystem
 import org.apache.spark.sql.functions.{lit, lower, struct, sum, udf}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.LegacyBehaviorPolicy.EXCEPTION
@@ -84,18 +82,18 @@ class QueryExecutionErrorsSuite
     (df1, df2)
   }
 
-  test("INVALID_PARAMETER_VALUE: invalid key lengths in AES functions") {
+  test("INVALID_PARAMETER_VALUE.AES_KEY_LENGTH: invalid key lengths in AES functions") {
     val (df1, df2) = getAesInputs()
     def checkInvalidKeyLength(df: => DataFrame, inputBytes: Int): Unit = {
       checkError(
         exception = intercept[SparkException] {
           df.collect
         }.getCause.asInstanceOf[SparkRuntimeException],
-        errorClass = "INVALID_PARAMETER_VALUE",
-        parameters = Map("parameter" -> "key",
+        errorClass = "INVALID_PARAMETER_VALUE.AES_KEY_LENGTH",
+        parameters = Map(
+          "parameter" -> "`key`",
           "functionName" -> "`aes_encrypt`/`aes_decrypt`",
-          "expected" -> ("expects a binary value with 16, 24 or 32 bytes, but got " +
-            inputBytes.toString + " bytes.")),
+          "actualLength" -> inputBytes.toString),
         sqlState = "22023")
     }
 
@@ -118,7 +116,7 @@ class QueryExecutionErrorsSuite
     }
   }
 
-  test("INVALID_PARAMETER_VALUE: AES decrypt failure - key mismatch") {
+  test("INVALID_PARAMETER_VALUE.AES_KEY: AES decrypt failure - key mismatch") {
     val (_, df2) = getAesInputs()
     Seq(
       ("value16", "1234567812345678"),
@@ -128,11 +126,10 @@ class QueryExecutionErrorsSuite
         exception = intercept[SparkException] {
           df2.selectExpr(s"aes_decrypt(unbase64($colName), binary('$key'), 'ECB')").collect
         }.getCause.asInstanceOf[SparkRuntimeException],
-        errorClass = "INVALID_PARAMETER_VALUE",
-        parameters = Map("parameter" -> "expr, key",
+        errorClass = "INVALID_PARAMETER_VALUE.AES_KEY",
+        parameters = Map("parameter" -> "`expr`, `key`",
           "functionName" -> "`aes_encrypt`/`aes_decrypt`",
-          "expected" -> ("Detail message: " +
-            "Given final block not properly padded. " +
+          "detailMessage" -> ("Given final block not properly padded. " +
             "Such issues can arise if a bad key is used during decryption.")),
         sqlState = "22023")
     }
@@ -448,7 +445,7 @@ class QueryExecutionErrorsSuite
 
       override def getResources(name: String): java.util.Enumeration[URL] = {
         if (name.equals("META-INF/services/org.apache.spark.sql.sources.DataSourceRegister")) {
-          // scalastyle:off
+          // scalastyle:off throwerror
           throw new ServiceConfigurationError(s"Illegal configuration-file syntax: $name",
             new NoClassDefFoundError("org.apache.spark.sql.sources.HadoopFsRelationProvider"))
           // scalastyle:on throwerror
@@ -632,34 +629,72 @@ class QueryExecutionErrorsSuite
       },
       errorClass = "UNSUPPORTED_DATATYPE",
       parameters = Map(
-        "typeName" -> "StructType()[1.1] failure: 'TimestampType' expected but 'S' found\n\nStructType()\n^"
+        "typeName" ->
+          "StructType()[1.1] failure: 'TimestampType' expected but 'S' found\n\nStructType()\n^"
       ),
       sqlState = "0A000")
   }
 
-  test("RENAME_SRC_PATH_NOT_FOUND: rename the file which source path does not exist") {
-    var srcPath: Path = null
-    val e = intercept[SparkFileNotFoundException](
-      withTempPath { p =>
-        val conf = new Configuration()
-        conf.set("fs.test.impl", classOf[RenameReturnsFalseFileSystem].getName)
-        conf.set("fs.defaultFS", "test:///")
-        val basePath = new Path(p.getAbsolutePath)
-        val fm = new FileSystemBasedCheckpointFileManager(basePath, conf)
-        srcPath = new Path(s"$basePath/file")
-        assert(!fm.exists(srcPath))
-        fm.createAtomic(srcPath, overwriteIfPossible = true).cancel()
-        assert(!fm.exists(srcPath))
-        val dstPath = new Path(s"$basePath/new_file")
-        fm.renameTempFile(srcPath, dstPath, true)
+  test("FAILED_RENAME_PATH: rename when destination path already exists") {
+    withTempPath { p =>
+      withSQLConf(
+        "spark.sql.streaming.checkpointFileManagerClass" ->
+          classOf[FileSystemBasedCheckpointFileManager].getName,
+        "fs.file.impl" -> classOf[FakeFileSystemAlwaysExists].getName,
+        // FileSystem caching could cause a different implementation of fs.file to be used
+        "fs.file.impl.disable.cache" -> "true") {
+        val checkpointLocation = p.getAbsolutePath
+
+        val ds = spark.readStream.format("rate").load()
+        val e = intercept[SparkConcurrentModificationException] {
+          ds.writeStream
+            .option("checkpointLocation", checkpointLocation)
+            .queryName("_")
+            .format("memory")
+            .start()
+        }
+
+        val expectedPath = p.toURI
+        checkError(
+          exception = e.getCause.asInstanceOf[SparkFileAlreadyExistsException],
+          errorClass = "FAILED_RENAME_PATH",
+          sqlState = Some("22023"),
+          matchPVals = true,
+          parameters = Map("sourcePath" -> s"$expectedPath.+",
+            "targetPath" -> s"$expectedPath.+"))
       }
-    )
-    checkError(
-      exception = e,
-      errorClass = "RENAME_SRC_PATH_NOT_FOUND",
-      parameters = Map(
-        "sourcePath" -> s"$srcPath"
-      ))
+    }
+  }
+
+  test("RENAME_SRC_PATH_NOT_FOUND: rename the file which source path does not exist") {
+    withTempPath { p =>
+      withSQLConf(
+        "spark.sql.streaming.checkpointFileManagerClass" ->
+          classOf[FileSystemBasedCheckpointFileManager].getName,
+        "fs.file.impl" -> classOf[FakeFileSystemNeverExists].getName,
+        // FileSystem caching could cause a different implementation of fs.file to be used
+        "fs.file.impl.disable.cache" -> "true"
+      ) {
+        val checkpointLocation = p.getAbsolutePath
+
+        val ds = spark.readStream.format("rate").load()
+        val e = intercept[SparkFileNotFoundException] {
+          ds.writeStream
+            .option("checkpointLocation", checkpointLocation)
+            .queryName("_")
+            .format("memory")
+            .start()
+        }
+
+        val expectedPath = p.toURI
+        checkError(
+          exception = e,
+          errorClass = "RENAME_SRC_PATH_NOT_FOUND",
+          matchPVals = true,
+          parameters = Map("sourcePath" -> s"$expectedPath.+")
+        )
+      }
+    }
   }
 
   test("UNSUPPORTED_FEATURE.JDBC_TRANSACTION: the target JDBC server does not support " +
@@ -744,4 +779,12 @@ class FakeFileSystemSetPermission extends LocalFileSystem {
   override def setPermission(src: Path, permission: FsPermission): Unit = {
     throw new IOException(s"fake fileSystem failed to set permission: $permission")
   }
+}
+
+class FakeFileSystemAlwaysExists extends DebugFilesystem {
+  override def exists(f: Path): Boolean = true
+}
+
+class FakeFileSystemNeverExists extends DebugFilesystem {
+  override def exists(f: Path): Boolean = false
 }
