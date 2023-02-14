@@ -75,7 +75,8 @@ trait ConstraintHelper {
         inferredConstraints ++= replaceConstraints(predicates - eq, l, r)
       case _ => // No inference
     }
-    inferredConstraints -- constraints
+    inferredConstraints.filterNot(SubqueryExpression.hasInOrCorrelatedExistsSubquery) --
+      constraints
   }
 
   private def replaceConstraints(

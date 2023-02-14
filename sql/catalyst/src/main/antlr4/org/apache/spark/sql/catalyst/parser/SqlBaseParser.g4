@@ -697,7 +697,13 @@ setQuantifier
     ;
 
 relation
-    : LATERAL? relationPrimary joinRelation*
+    : LATERAL? relationPrimary relationExtension*
+    ;
+
+relationExtension
+    : joinRelation
+    | pivotClause
+    | unpivotClause
     ;
 
 joinRelation
@@ -924,6 +930,7 @@ primaryExpression
 
 constant
     : NULL                                                                                     #nullLiteral
+    | COLON identifier                                                                         #parameterLiteral
     | interval                                                                                 #intervalLiteral
     | identifier stringLit                                                                     #typeConstructor
     | number                                                                                   #numericLiteral

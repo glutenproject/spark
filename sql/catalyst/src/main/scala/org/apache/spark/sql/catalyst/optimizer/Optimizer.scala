@@ -587,7 +587,7 @@ object RemoveRedundantAliases extends Rule[LogicalPlan] {
           newChild
         }
 
-        val mapping = AttributeMap(currentNextAttrPairs.toSeq)
+        val mapping = AttributeMap(currentNextAttrPairs)
 
         // Create a an expression cleaning function for nodes that can actually produce redundant
         // aliases, use identity otherwise.
@@ -1039,7 +1039,9 @@ object CollapseProject extends Rule[LogicalPlan] with AliasHelper {
     // We can only collapse expressions if all input expressions meet the following criteria:
     // - The input is deterministic.
     // - The input is only consumed once OR the underlying input expression is cheap.
-    consumers.flatMap(collectReferences)
+    consumers
+      .filter(_.references.exists(producerMap.contains))
+      .flatMap(collectReferences)
       .groupBy(identity)
       .mapValues(_.size)
       .forall {
@@ -1083,6 +1085,7 @@ object CollapseProject extends Rule[LogicalPlan] with AliasHelper {
   }
 
   private object ExtractOnlyRef {
+    @scala.annotation.tailrec
     def unapply(expr: Expression): Option[Attribute] = expr match {
       case a: Alias => unapply(a.child)
       case e: ExtractValue => unapply(e.children.head)

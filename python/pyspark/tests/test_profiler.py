@@ -22,6 +22,7 @@ import unittest
 from io import StringIO
 
 from pyspark import SparkConf, SparkContext, BasicProfiler
+from pyspark.profiler import has_memory_profiler
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import udf
 from pyspark.sql.utils import PythonException
@@ -126,6 +127,7 @@ class ProfilerTests2(unittest.TestCase):
         finally:
             sc.stop()
 
+    @unittest.skipIf(has_memory_profiler, "Test when memory-profiler is not installed.")
     def test_no_memory_profile_installed(self):
         sc = SparkContext(
             conf=SparkConf()
@@ -153,7 +155,7 @@ if __name__ == "__main__":
     from pyspark.tests.test_profiler import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:
