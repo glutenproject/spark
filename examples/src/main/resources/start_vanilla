@@ -1,4 +1,3 @@
-#skip_master
 ./stop_thrift
 SPARK_HOME=/home/sparkuser/tpcds/spark
 THRIFTSERVER_START_CMD="${SPARK_HOME}/sbin/start-thriftserver.sh"
@@ -28,7 +27,9 @@ THRIFTSERVER_CONFIG="--name ${runname}
 --conf spark.sql.broadcastTimeout=300 
 --conf spark.driver.maxResultSize=20g 
 --conf spark.sql.shuffle.partitions=432
---conf spark.sql.optimizer.runtime.bloomFilter.enabled=false
+--conf spark.sql.optimizer.runtime.bloomFilter.applicationSideScanSizeThreshold=0
+--conf spark.sql.optimizer.runtime.bloomFilter.creationSideThreshold=10MB
+--conf spark.sql.optimizer.runtime.bloomFilter.enabled=true
 --conf spark.sql.optimizer.runtimeFilter.semiJoinReduction.enabled=true"
 
 $THRIFTSERVER_START_CMD $THRIFTSERVER_CONFIG
