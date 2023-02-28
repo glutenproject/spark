@@ -1235,6 +1235,7 @@ class DataFrameWindowFunctionsSuite extends QueryTest
 
     val window = Window.partitionBy($"key").orderBy($"order".asc_nulls_first)
     val window2 = Window.partitionBy($"key").orderBy($"order".desc_nulls_first)
+    val window3 = Window.orderBy($"order".asc_nulls_first)
 
     Seq(-1, 100).foreach { threshold =>
       withSQLConf(SQLConf.WINDOW_GROUP_LIMIT_THRESHOLD.key -> threshold.toString) {
@@ -1267,6 +1268,24 @@ class DataFrameWindowFunctionsSuite extends QueryTest
               Row("a", 4, "", 2.0, 1),
               Row("a", 4, "", 2.0, 1),
               Row("b", 1, "h", Double.NaN, 1),
+              Row("c", 2, null, 5.0, 1)
+            )
+          )
+
+          checkAnswer(df.withColumn("rn", row_number().over(window3)).where(condition),
+            Seq(
+              Row("c", 2, null, 5.0, 1)
+            )
+          )
+
+          checkAnswer(df.withColumn("rn", rank().over(window3)).where(condition),
+            Seq(
+              Row("c", 2, null, 5.0, 1)
+            )
+          )
+
+          checkAnswer(df.withColumn("rn", dense_rank().over(window3)).where(condition),
+            Seq(
               Row("c", 2, null, 5.0, 1)
             )
           )
@@ -1303,6 +1322,29 @@ class DataFrameWindowFunctionsSuite extends QueryTest
               Row("b", 1, "h", Double.NaN, 1),
               Row("b", 1, "n", Double.PositiveInfinity, 2),
               Row("c", 1, "a", -4.0, 2),
+              Row("c", 2, null, 5.0, 1)
+            )
+          )
+
+          checkAnswer(df.withColumn("rn", row_number().over(window3)).where(condition),
+            Seq(
+              Row("a", 4, "", 2.0, 2),
+              Row("c", 2, null, 5.0, 1)
+            )
+          )
+
+          checkAnswer(df.withColumn("rn", rank().over(window3)).where(condition),
+            Seq(
+              Row("a", 4, "", 2.0, 2),
+              Row("a", 4, "", 2.0, 2),
+              Row("c", 2, null, 5.0, 1)
+            )
+          )
+
+          checkAnswer(df.withColumn("rn", dense_rank().over(window3)).where(condition),
+            Seq(
+              Row("a", 4, "", 2.0, 2),
+              Row("a", 4, "", 2.0, 2),
               Row("c", 2, null, 5.0, 1)
             )
           )
