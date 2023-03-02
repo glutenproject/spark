@@ -29,7 +29,7 @@ THRIFTSERVER_CONFIG="--name ${runname}
 --conf spark.driver.maxResultSize=20g 
 --conf spark.sql.shuffle.partitions=432
 --conf spark.sql.optimizer.runtime.bloomFilter.applicationSideScanSizeThreshold=0
---conf spark.sql.optimizer.runtime.bloomFilter.creationSideThreshold=50MB
+--conf spark.sql.optimizer.runtime.bloomFilter.creationSideThreshold=100MB
 --conf spark.sql.optimizer.runtime.bloomFilter.enabled=true
 --conf spark.sql.optimizer.runtimeFilter.semiJoinReduction.enabled=true"
 
