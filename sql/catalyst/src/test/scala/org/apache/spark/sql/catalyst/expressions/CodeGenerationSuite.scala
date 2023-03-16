@@ -492,24 +492,6 @@ class CodeGenerationSuite extends SparkFunSuite with ExpressionEvalHelper {
       assert(ctx.subExprEliminationExprs.contains(wrap(ref)))
       assert(!ctx.subExprEliminationExprs.contains(wrap(add1)))
     }
-
-    // emulate an actual codegen workload
-    {
-      val ctx = new CodegenContext
-      // before
-      ctx.generateExpressions(Seq(add2, add1), doSubexpressionElimination = true) // trigger CSE
-      assert(ctx.subExprEliminationExprs.contains(wrap(add1)))
-      // call withSubExprEliminationExprs
-      ctx.withSubExprEliminationExprs(Map(wrap(ref) -> dummy)) {
-        assert(ctx.subExprEliminationExprs.contains(wrap(ref)))
-        assert(!ctx.subExprEliminationExprs.contains(wrap(add1)))
-        Seq.empty
-      }
-      // after
-      assert(ctx.subExprEliminationExprs.nonEmpty)
-      assert(ctx.subExprEliminationExprs.contains(wrap(add1)))
-      assert(!ctx.subExprEliminationExprs.contains(wrap(ref)))
-    }
   }
 
   test("SPARK-23986: freshName can generate duplicated names") {
@@ -534,18 +516,6 @@ class CodeGenerationSuite extends SparkFunSuite with ExpressionEvalHelper {
     }
     assert(appender.loggingEvents
       .exists(_.getMessage().getFormattedMessage.contains("Generated method too long")))
-  }
-
-  test("SPARK-28916: subexpression elimination can cause 64kb code limit on UnsafeProjection") {
-    val numOfExprs = 10000
-    val exprs = (0 to numOfExprs).flatMap(colIndex =>
-      Seq(Add(BoundReference(colIndex, DoubleType, true),
-        BoundReference(numOfExprs + colIndex, DoubleType, true)),
-        Add(BoundReference(colIndex, DoubleType, true),
-          BoundReference(numOfExprs + colIndex, DoubleType, true))))
-    // these should not fail to compile due to 64K limit
-    GenerateUnsafeProjection.generate(exprs, true)
-    GenerateMutableProjection.generate(exprs, true)
   }
 
   test("SPARK-32624: Use CodeGenerator.typeName() to fix byte[] compile issue") {

@@ -21,7 +21,7 @@ import java.util.Objects
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
+import org.apache.spark.sql.catalyst.expressions.EquivalentExpressions.supportedExpression
 import org.apache.spark.sql.catalyst.expressions.objects.LambdaVariable
 import org.apache.spark.util.Utils
 
@@ -125,23 +125,6 @@ class EquivalentExpressions {
     }
   }
 
-  // There are some special expressions that we should not recurse into all of its children.
-  //   1. CodegenFallback: it's children will not be used to generate code (call eval() instead)
-  //   2. ConditionalExpression: use its children that will always be evaluated.
-  private def childrenToRecurse(expr: Expression): Seq[Expression] = expr match {
-    case _: CodegenFallback => Nil
-    case c: ConditionalExpression => c.alwaysEvaluatedInputs
-    case other => other.children
-  }
-
-  // For some special expressions we cannot just recurse into all of its children, but we can
-  // recursively add the common expressions shared between all of its children.
-  private def commonChildrenToRecurse(expr: Expression): Seq[Seq[Expression]] = expr match {
-    case _: CodegenFallback => Nil
-    case c: ConditionalExpression => c.branchGroups
-    case _ => Nil
-  }
-
   /**
    * Adds the expression to this data structure recursively. Stops if a matching expression
    * is found. That is, if `expr` has already been added, its children are not added.
@@ -149,7 +132,9 @@ class EquivalentExpressions {
   def addExprTree(
       expr: Expression,
       map: mutable.HashMap[ExpressionEquals, ExpressionStats] = equivalenceMap): Unit = {
-    updateExprTree(expr, map)
+    if (supportedExpression(expr)) {
+      updateExprTree(expr, map)
+    }
   }
 
   private def updateExprTree(
@@ -167,8 +152,7 @@ class EquivalentExpressions {
 
     if (!skip && !updateExprInMap(expr, map, useCount)) {
       val uc = useCount.signum
-      childrenToRecurse(expr).foreach(updateExprTree(_, map, uc))
-      commonChildrenToRecurse(expr).filter(_.nonEmpty).foreach(updateCommonExprs(_, map, uc))
+      expr.children.foreach(updateExprTree(_, map, uc))
     }
   }
 
@@ -177,7 +161,11 @@ class EquivalentExpressions {
    * equivalent expressions.
    */
   def getExprState(e: Expression): Option[ExpressionStats] = {
-    equivalenceMap.get(ExpressionEquals(e))
+    if (supportedExpression(e)) {
+      equivalenceMap.get(ExpressionEquals(e))
+    } else {
+      None
+    }
   }
 
   // Exposed for testing.
@@ -203,6 +191,23 @@ class EquivalentExpressions {
       sb.append("  ").append(s"${stats.expr}: useCount = ${stats.useCount}").append('\n')
     }
     sb.toString()
+  }
+}
+
+object EquivalentExpressions {
+  def supportedExpression(e: Expression): Boolean = {
+    !e.exists {
+      // `LambdaVariable` is usually used as a loop variable and `NamedLambdaVariable` is used in
+      // higher-order functions, which can't be evaluated ahead of the execution.
+      case _: LambdaVariable => true
+      case _: NamedLambdaVariable => true
+
+      // `PlanExpression` wraps query plan. To compare query plans of `PlanExpression` on executor,
+      // can cause error like NPE.
+      case _: PlanExpression[_] => Utils.isInRunningSparkTask
+
+      case _ => false
+    }
   }
 }
 

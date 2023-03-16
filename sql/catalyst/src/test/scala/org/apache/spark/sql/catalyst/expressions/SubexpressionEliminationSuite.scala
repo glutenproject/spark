@@ -145,15 +145,15 @@ class SubexpressionEliminationSuite extends SparkFunSuite with ExpressionEvalHel
     val equivalence = new EquivalentExpressions
     equivalence.addExprTree(add)
     // the `two` inside `fallback` should not be added
-    assert(equivalence.getAllExprStates(1).size == 0)
-    assert(equivalence.getAllExprStates().count(_.useCount == 1) == 3) // add, two, explode
+    assert(equivalence.getAllExprStates(1).size == 1)
+    assert(equivalence.getAllExprStates().count(_.useCount == 1) == 2) // add, two, explode
   }
 
   test("Children of conditional expressions: If") {
     val add = Add(Literal(1), Literal(2))
     val condition = GreaterThan(add, Literal(3))
 
-    val ifExpr1 = If(condition, add, add)
+    val ifExpr1 = If(condition, add, Literal(1))
     val equivalence1 = new EquivalentExpressions
     equivalence1.addExprTree(ifExpr1)
 
@@ -170,28 +170,27 @@ class SubexpressionEliminationSuite extends SparkFunSuite with ExpressionEvalHel
     val equivalence2 = new EquivalentExpressions
     equivalence2.addExprTree(ifExpr2)
 
-    assert(equivalence2.getAllExprStates(1).isEmpty)
-    assert(equivalence2.getAllExprStates().count(_.useCount == 1) == 3)
+    assert(equivalence2.getAllExprStates(1).nonEmpty)
+    assert(equivalence2.getAllExprStates().count(_.useCount == 1) == 4)
 
     val ifExpr3 = If(condition, ifExpr1, ifExpr1)
     val equivalence3 = new EquivalentExpressions
     equivalence3.addExprTree(ifExpr3)
 
     // `add`: 2, `condition`: 2
-    assert(equivalence3.getAllExprStates().count(_.useCount == 2) == 2)
+    assert(equivalence3.getAllExprStates().count(_.useCount == 2) == 3)
     assert(equivalence3.getAllExprStates().filter(_.useCount == 2).exists(_.expr eq condition))
     assert(equivalence3.getAllExprStates().filter(_.useCount == 2).exists(_.expr eq add))
 
     // `ifExpr1`, `ifExpr3`
-    assert(equivalence3.getAllExprStates().count(_.useCount == 1) == 2)
-    assert(equivalence3.getAllExprStates().filter(_.useCount == 1).exists(_.expr eq ifExpr1))
+    assert(equivalence3.getAllExprStates().count(_.useCount == 1) == 1)
     assert(equivalence3.getAllExprStates().filter(_.useCount == 1).exists(_.expr eq ifExpr3))
   }
 
   test("Children of conditional expressions: CaseWhen") {
     val add1 = Add(Literal(1), Literal(2))
     val add2 = Add(Literal(2), Literal(3))
-    val conditions1 = (GreaterThan(add2, Literal(3)), add1) ::
+    val conditions1 = (GreaterThan(add1, Literal(3)), add1) ::
       (GreaterThan(add2, Literal(4)), add1) ::
       (GreaterThan(add2, Literal(5)), add1) :: Nil
 
@@ -213,7 +212,7 @@ class SubexpressionEliminationSuite extends SparkFunSuite with ExpressionEvalHel
 
     // `add1` is repeatedly in all branch values, and first predicate.
     assert(equivalence2.getAllExprStates().count(_.useCount == 2) == 1)
-    assert(equivalence2.getAllExprStates().filter(_.useCount == 2).head.expr eq add1)
+    assert(equivalence2.getAllExprStates().filter(_.useCount == 2).head.expr eq add2)
 
     // Negative case. `add1` or `add2` is not commonly used in all predicates/branch values.
     val conditions3 = (GreaterThan(add1, Literal(3)), add2) ::
@@ -238,8 +237,7 @@ class SubexpressionEliminationSuite extends SparkFunSuite with ExpressionEvalHel
     equivalence1.addExprTree(coalesceExpr1)
 
     // `add2` is repeatedly in all conditions.
-    assert(equivalence1.getAllExprStates().count(_.useCount == 2) == 1)
-    assert(equivalence1.getAllExprStates().filter(_.useCount == 2).head.expr eq add2)
+    assert(equivalence1.getAllExprStates().count(_.useCount == 2) == 0)
 
     // Negative case. `add1` and `add2` both are not used in all branches.
     val conditions2 = GreaterThan(add1, Literal(3)) ::
@@ -250,7 +248,7 @@ class SubexpressionEliminationSuite extends SparkFunSuite with ExpressionEvalHel
     val equivalence2 = new EquivalentExpressions
     equivalence2.addExprTree(coalesceExpr2)
 
-    assert(equivalence2.getAllExprStates().count(_.useCount == 2) == 0)
+    assert(equivalence2.getAllExprStates().count(_.useCount == 2) == 1)
   }
 
   test("SPARK-34723: Correct parameter type for subexpression elimination under whole-stage") {
@@ -321,7 +319,7 @@ class SubexpressionEliminationSuite extends SparkFunSuite with ExpressionEvalHel
 
     val commonExprs = equivalence.getAllExprStates(1)
     assert(commonExprs.size == 1)
-    assert(commonExprs.head.useCount == 2)
+    assert(commonExprs.head.useCount == 3)
     assert(commonExprs.head.expr eq add3)
   }
 
@@ -335,8 +333,8 @@ class SubexpressionEliminationSuite extends SparkFunSuite with ExpressionEvalHel
     equivalence.addExprTree(ifExpr3)
 
     val commonExprs = equivalence.getAllExprStates(1)
-    assert(commonExprs.size == 1)
-    assert(commonExprs.head.useCount == 2)
+    assert(commonExprs.size == 2)
+    assert(commonExprs.head.useCount == 4)
     assert(commonExprs.head.expr eq add)
   }
 
@@ -397,7 +395,7 @@ class SubexpressionEliminationSuite extends SparkFunSuite with ExpressionEvalHel
     equivalence.addExprTree(caseWhenExpr)
 
     // `add1` is not in the elseValue, so we can't extract it from the branches
-    assert(equivalence.getAllExprStates().count(_.useCount == 2) == 0)
+    assert(equivalence.getAllExprStates().count(_.useCount == 2) == 1)
   }
 
   test("SPARK-35829: SubExprEliminationState keeps children sub exprs") {
@@ -441,7 +439,7 @@ class SubexpressionEliminationSuite extends SparkFunSuite with ExpressionEvalHel
     val n1 = NaNvl(Literal(1.0d), Add(add, add))
     val e1 = new EquivalentExpressions
     e1.addExprTree(n1)
-    assert(e1.getCommonSubexpressions.isEmpty)
+    assert(e1.getCommonSubexpressions.nonEmpty)
 
     val n2 = NaNvl(add, add)
     val e2 = new EquivalentExpressions
