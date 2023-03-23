@@ -20,13 +20,16 @@ package org.apache.spark.sql
 import java.io.{Externalizable, ObjectInput, ObjectOutput}
 import java.sql.{Date, Timestamp}
 
+import scala.util.Random
+
 import org.apache.hadoop.fs.{Path, PathFilter}
 import org.scalatest.Assertions._
 import org.scalatest.exceptions.TestFailedException
 import org.scalatest.prop.TableDrivenPropertyChecks._
 
-import org.apache.spark.{SparkException, TaskContext}
+import org.apache.spark.{SparkConf, SparkException, TaskContext}
 import org.apache.spark.TestUtils.withListener
+import org.apache.spark.internal.config.MAX_RESULT_SIZE
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql.catalyst.{FooClassWithEnum, FooEnum, ScroogeLikeExample}
 import org.apache.spark.sql.catalyst.encoders.{OuterScopes, RowEncoder}
@@ -351,15 +354,21 @@ class DatasetSuite extends QueryTest
           start = 0,
           stop = 8))
 
-      var e = intercept[AnalysisException] {
-        ds.select(ds("`(_1)?+.+`"))
-      }
-      assert(e.getMessage.contains("Cannot resolve column name \"`(_1)?+.+`\""))
+      checkError(
+        exception = intercept[AnalysisException] {
+          ds.select(ds("`(_1)?+.+`"))
+        },
+        errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+        parameters = Map("objectName" -> "`(_1)?+.+`", "proposal" -> "`_1`, `_2`")
+      )
 
-      e = intercept[AnalysisException] {
-        ds.select(ds("`(_1|_2)`"))
-      }
-      assert(e.getMessage.contains("Cannot resolve column name \"`(_1|_2)`\""))
+      checkError(
+        exception = intercept[AnalysisException] {
+          ds.select(ds("`(_1|_2)`"))
+        },
+        errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+        parameters = Map("objectName" -> "`(_1|_2)`", "proposal" -> "`_1`, `_2`")
+      )
     }
 
     withSQLConf(SQLConf.SUPPORT_QUOTED_REGEX_COLUMN_NAME.key -> "true") {
@@ -570,6 +579,94 @@ class DatasetSuite extends QueryTest
       "a", "30", "b", "3", "c", "1")
   }
 
+  test("groupBy, flatMapSorted") {
+    val ds = Seq(("a", 1, 10), ("a", 2, 20), ("b", 2, 1), ("b", 1, 2), ("c", 1, 1))
+      .toDF("key", "seq", "value")
+    val grouped = ds.groupBy($"key").as[String, (String, Int, Int)]
+    val aggregated = grouped.flatMapSortedGroups($"seq", expr("length(key)"), $"value") {
+      (g, iter) => Iterator(g, iter.mkString(", "))
+    }
+
+    checkDatasetUnorderly(
+      aggregated,
+      "a", "(a,1,10), (a,2,20)",
+      "b", "(b,1,2), (b,2,1)",
+      "c", "(c,1,1)"
+    )
+
+    // Star is not allowed as group sort column
+    checkError(
+      exception = intercept[AnalysisException] {
+        grouped.flatMapSortedGroups($"*") {
+          (g, iter) => Iterator(g, iter.mkString(", "))
+        }
+      },
+      errorClass = "_LEGACY_ERROR_TEMP_1020",
+      parameters = Map("elem" -> "'*'", "prettyName" -> "MapGroups"))
+  }
+
+  test("groupBy function, flatMapSorted") {
+    val ds = Seq(("a", 1, 10), ("a", 2, 20), ("b", 2, 1), ("b", 1, 2), ("c", 1, 1))
+      .toDF("key", "seq", "value")
+    // groupByKey Row => String adds key columns `value` to the dataframe
+    val grouped = ds.groupByKey(v => v.getString(0))
+    // $"value" here is expected to not reference the key column
+    val aggregated = grouped.flatMapSortedGroups($"seq", expr("length(key)"), $"value") {
+      (g, iter) => Iterator(g, iter.mkString(", "))
+    }
+
+    checkDatasetUnorderly(
+      aggregated,
+      "a", "[a,1,10], [a,2,20]",
+      "b", "[b,1,2], [b,2,1]",
+      "c", "[c,1,1]"
+    )
+
+    // Star is not allowed as group sort column
+    checkError(
+      exception = intercept[AnalysisException] {
+        grouped.flatMapSortedGroups($"*") {
+          (g, iter) => Iterator(g, iter.mkString(", "))
+        }
+      },
+      errorClass = "_LEGACY_ERROR_TEMP_1020",
+      parameters = Map("elem" -> "'*'", "prettyName" -> "MapGroups"))
+  }
+
+  test("groupBy, flatMapSorted desc") {
+    val ds = Seq(("a", 1, 10), ("a", 2, 20), ("b", 2, 1), ("b", 1, 2), ("c", 1, 1))
+      .toDF("key", "seq", "value")
+    val grouped = ds.groupBy($"key").as[String, (String, Int, Int)]
+    val aggregated = grouped.flatMapSortedGroups($"seq".desc, expr("length(key)"), $"value") {
+      (g, iter) => Iterator(g, iter.mkString(", "))
+    }
+
+    checkDatasetUnorderly(
+      aggregated,
+      "a", "(a,2,20), (a,1,10)",
+      "b", "(b,2,1), (b,1,2)",
+      "c", "(c,1,1)"
+    )
+  }
+
+  test("groupBy function, flatMapSorted desc") {
+    val ds = Seq(("a", 1, 10), ("a", 2, 20), ("b", 2, 1), ("b", 1, 2), ("c", 1, 1))
+      .toDF("key", "seq", "value")
+    // groupByKey Row => String adds key columns `value` to the dataframe
+    val grouped = ds.groupByKey(v => v.getString(0))
+    // $"value" here is expected to not reference the key column
+    val aggregated = grouped.flatMapSortedGroups($"seq".desc, expr("length(key)"), $"value") {
+      (g, iter) => Iterator(g, iter.mkString(", "))
+    }
+
+    checkDatasetUnorderly(
+      aggregated,
+      "a", "[a,2,20], [a,1,10]",
+      "b", "[b,2,1], [b,1,2]",
+      "c", "[c,1,1]"
+    )
+  }
+
   test("groupBy function, mapValues, flatMap") {
     val ds = Seq(("a", 10), ("a", 20), ("b", 1), ("b", 2), ("c", 1)).toDS()
     val keyValue = ds.groupByKey(_._1).mapValues(_._2)
@@ -724,6 +821,79 @@ class DatasetSuite extends QueryTest
       1 -> "a", 2 -> "bc", 3 -> "d")
   }
 
+  test("cogroup with groupBy and sorted") {
+    val left = Seq(1 -> "a", 3 -> "xyz", 5 -> "hello", 3 -> "abc", 3 -> "ijk").toDS()
+    val right = Seq(2 -> "q", 3 -> "w", 5 -> "x", 5 -> "z", 3 -> "a", 5 -> "y").toDS()
+    val groupedLeft = left.groupBy($"_1").as[Int, (Int, String)]
+    val groupedRight = right.groupBy($"_1").as[Int, (Int, String)]
+
+    val neitherSortedExpected = Seq(1 -> "a#", 2 -> "#q", 3 -> "xyzabcijk#wa", 5 -> "hello#xzy")
+    val leftSortedExpected = Seq(1 -> "a#", 2 -> "#q", 3 -> "abcijkxyz#wa", 5 -> "hello#xzy")
+    val rightSortedExpected = Seq(1 -> "a#", 2 -> "#q", 3 -> "xyzabcijk#aw", 5 -> "hello#xyz")
+    val bothSortedExpected = Seq(1 -> "a#", 2 -> "#q", 3 -> "abcijkxyz#aw", 5 -> "hello#xyz")
+    val bothDescSortedExpected = Seq(1 -> "a#", 2 -> "#q", 3 -> "xyzijkabc#wa", 5 -> "hello#zyx")
+
+    val ascOrder = Seq($"_2")
+    val descOrder = Seq($"_2".desc)
+    val exprOrder = Seq(substring($"_2", 0, 1))
+    val none = Seq.empty
+
+    Seq(
+      ("neither", none, none, neitherSortedExpected),
+      ("left", ascOrder, none, leftSortedExpected),
+      ("right", none, ascOrder, rightSortedExpected),
+      ("both", ascOrder, ascOrder, bothSortedExpected),
+      ("expr", exprOrder, exprOrder, bothSortedExpected),
+      ("both desc", descOrder, descOrder, bothDescSortedExpected)
+    ).foreach { case (label, leftOrder, rightOrder, expected) =>
+      withClue(s"$label sorted") {
+        val cogrouped = groupedLeft.cogroupSorted(groupedRight)(leftOrder: _*)(rightOrder: _*) {
+          (key, left, right) =>
+            Iterator(key -> (left.map(_._2).mkString + "#" + right.map(_._2).mkString))
+        }
+
+        checkDatasetUnorderly(cogrouped, expected.toList: _*)
+      }
+    }
+  }
+
+  test("cogroup with groupBy function and sorted") {
+    val left = Seq(1 -> "a", 3 -> "xyz", 5 -> "hello", 3 -> "abc", 3 -> "ijk").toDS()
+    val right = Seq(2 -> "q", 3 -> "w", 5 -> "x", 5 -> "z", 3 -> "a", 5 -> "y").toDS()
+    // this groupByKey produces conflicting _1 and _2 columns
+    // that should be ignored when resolving sort expressions
+    val groupedLeft = left.groupByKey(row => (row._1, row._1))
+    val groupedRight = right.groupByKey(row => (row._1, row._1))
+
+    val neitherSortedExpected = Seq(1 -> "a#", 2 -> "#q", 3 -> "xyzabcijk#wa", 5 -> "hello#xzy")
+    val leftSortedExpected = Seq(1 -> "a#", 2 -> "#q", 3 -> "abcijkxyz#wa", 5 -> "hello#xzy")
+    val rightSortedExpected = Seq(1 -> "a#", 2 -> "#q", 3 -> "xyzabcijk#aw", 5 -> "hello#xyz")
+    val bothSortedExpected = Seq(1 -> "a#", 2 -> "#q", 3 -> "abcijkxyz#aw", 5 -> "hello#xyz")
+    val bothDescSortedExpected = Seq(1 -> "a#", 2 -> "#q", 3 -> "xyzijkabc#wa", 5 -> "hello#zyx")
+
+    val ascOrder = Seq($"_2")
+    val descOrder = Seq($"_2".desc)
+    val exprOrder = Seq(substring($"_2", 0, 1))
+    val none = Seq.empty
+
+    Seq(
+      ("neither", none, none, neitherSortedExpected),
+      ("left", ascOrder, none, leftSortedExpected),
+      ("right", none, ascOrder, rightSortedExpected),
+      ("both", ascOrder, ascOrder, bothSortedExpected),
+      ("expr", exprOrder, exprOrder, bothSortedExpected),
+      ("both desc", descOrder, descOrder, bothDescSortedExpected)
+    ).foreach { case (label, leftOrder, rightOrder, expected) =>
+      withClue(s"$label sorted") {
+        val cogrouped = groupedLeft.cogroupSorted(groupedRight)(leftOrder: _*)(rightOrder: _*) {
+          (key, left, right) =>
+            Iterator(key._1 -> (left.map(_._2).mkString + "#" + right.map(_._2).mkString))
+        }
+        checkDatasetUnorderly(cogrouped, expected.toList: _*)
+      }
+    }
+  }
+
   test("SPARK-34806: observation on datasets") {
     val namedObservation = Observation("named")
     val unnamedObservation = Observation()
@@ -788,6 +958,19 @@ class DatasetSuite extends QueryTest
     observe(spark.range(0), Map("percentile_approx_val" -> null))
     observe(spark.range(1, 10), Map("percentile_approx_val" -> 5))
     observe(spark.range(1, 10, 1, 11), Map("percentile_approx_val" -> 5))
+  }
+
+  test("observation on datasets when a DataSet trigger foreach action") {
+    def f(): Unit = {}
+
+    val namedObservation = Observation("named")
+    val observed_df = spark.range(100).observe(
+      namedObservation, percentile_approx($"id", lit(0.5), lit(100)).as("percentile_approx_val"))
+
+    observed_df.foreach(r => f)
+    val expected = Map("percentile_approx_val" -> 49)
+
+    assert(namedObservation.get === expected)
   }
 
   test("sample with replacement") {
@@ -1150,6 +1333,22 @@ class DatasetSuite extends QueryTest
       errorClass = "TEMP_TABLE_OR_VIEW_ALREADY_EXISTS",
       parameters = Map("relationName" -> "`tempView`"))
     dataset.sparkSession.catalog.dropTempView("tempView")
+
+    withDatabase("test_db") {
+      withSQLConf(SQLConf.ALLOW_TEMP_VIEW_CREATION_WITH_MULTIPLE_NAME_PARTS.key -> "false") {
+        spark.sql("CREATE DATABASE IF NOT EXISTS test_db")
+        val e = intercept[AnalysisException](
+          dataset.createTempView("test_db.tempView"))
+        checkError(e,
+          errorClass = "TEMP_VIEW_NAME_TOO_MANY_NAME_PARTS",
+          parameters = Map("actualName" -> "test_db.tempView"))
+      }
+
+      withSQLConf(SQLConf.ALLOW_TEMP_VIEW_CREATION_WITH_MULTIPLE_NAME_PARTS.key -> "true") {
+          dataset.createTempView("test_db.tempView")
+          assert(spark.catalog.tableExists("tempView"))
+      }
+    }
   }
 
   test("SPARK-15381: physical object operator should define `reference` correctly") {
@@ -1532,7 +1731,7 @@ class DatasetSuite extends QueryTest
         val agg = cp.groupBy($"id" % 2).agg(count($"id"))
 
         agg.queryExecution.executedPlan.collectFirst {
-          case ShuffleExchangeExec(_, _: RDDScanExec, _) =>
+          case ShuffleExchangeExec(_, _: RDDScanExec, _, _) =>
           case BroadcastExchangeExec(_, _: RDDScanExec) =>
         }.foreach { _ =>
           fail(
@@ -1986,10 +2185,14 @@ class DatasetSuite extends QueryTest
     forAll(dotColumnTestModes) { (caseSensitive, colName) =>
       val ds = Seq(SpecialCharClass("1", "2")).toDS
       withSQLConf(SQLConf.CASE_SENSITIVE.key -> caseSensitive) {
-        val errorMsg = intercept[AnalysisException] {
-          ds(colName)
-        }
-        assert(errorMsg.getMessage.contains(s"did you mean to quote the `$colName` column?"))
+        val colName = if (caseSensitive == "true") "`Field`.`1`" else "`field`.`1`"
+        checkError(
+          exception = intercept[AnalysisException] {
+            ds(colName)
+          },
+          errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+          parameters = Map("objectName" -> colName, "proposal" -> "`field`.`1`, `field 2`")
+        )
       }
     }
   }
@@ -2225,6 +2428,35 @@ class DatasetSuite extends QueryTest
       })
       assert(parquetFiles.size === 10)
     }
+  }
+}
+
+class DatasetLargeResultCollectingSuite extends QueryTest
+  with SharedSparkSession {
+
+  override protected def sparkConf: SparkConf = super.sparkConf.set(MAX_RESULT_SIZE.key, "4g")
+  // SPARK-41193: Ignore this suite because it cannot run successfully with Spark
+  // default Java Options, if user need do local test, please make the following changes:
+  // - Maven test: change `-Xmx4g` of `scalatest-maven-plugin` in `sql/core/pom.xml` to `-Xmx10g`
+  // - SBT test: change `-Xmx4g` of `Test / javaOptions` in `SparkBuild.scala` to `-Xmx10g`
+  ignore("collect data with single partition larger than 2GB bytes array limit") {
+    // This test requires large memory and leads to OOM in Github Action so we skip it. Developer
+    // should verify it in local build.
+    assume(!sys.env.contains("GITHUB_ACTIONS"))
+    import org.apache.spark.sql.functions.udf
+
+    val genData = udf((id: Long, bytesSize: Int) => {
+      val rand = new Random(id)
+      val arr = new Array[Byte](bytesSize)
+      rand.nextBytes(arr)
+      arr
+    })
+
+    spark.udf.register("genData", genData.asNondeterministic())
+    // create data of size >2GB in single partition, which exceeds the byte array limit
+    // random gen to make sure it's poorly compressed
+    val df = spark.range(0, 2100, 1, 1).selectExpr("id", s"genData(id, 1000000) as data")
+    val res = df.queryExecution.executedPlan.executeCollect()
   }
 }
 

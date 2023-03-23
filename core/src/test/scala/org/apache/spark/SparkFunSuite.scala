@@ -31,8 +31,9 @@ import org.apache.logging.log4j._
 import org.apache.logging.log4j.core.{LogEvent, Logger, LoggerContext}
 import org.apache.logging.log4j.core.appender.AbstractAppender
 import org.apache.logging.log4j.core.config.Property
-import org.scalatest.{BeforeAndAfter, BeforeAndAfterAll, BeforeAndAfterEach, Failed, Outcome}
-import org.scalatest.funsuite.AnyFunSuite
+import org.scalactic.source.Position
+import org.scalatest.{BeforeAndAfter, BeforeAndAfterAll, BeforeAndAfterEach, Failed, Outcome, Tag}
+import org.scalatest.funsuite.AnyFunSuite // scalastyle:ignore funsuite
 
 import org.apache.spark.deploy.LocalSparkCluster
 import org.apache.spark.internal.Logging
@@ -64,7 +65,7 @@ import org.apache.spark.util.{AccumulatorContext, Utils}
  * }
  */
 abstract class SparkFunSuite
-  extends AnyFunSuite
+  extends AnyFunSuite // scalastyle:ignore funsuite
   with BeforeAndAfterAll
   with BeforeAndAfterEach
   with ThreadAudit
@@ -135,6 +136,19 @@ abstract class SparkFunSuite
     }
     val sparkHome = sys.props.getOrElse("spark.test.home", sys.env("SPARK_HOME"))
     java.nio.file.Paths.get(sparkHome, first +: more: _*)
+  }
+
+  // subclasses can override this to exclude certain tests by name
+  // useful when inheriting a test suite but do not want to run all tests in it
+  protected def excluded: Seq[String] = Seq.empty
+
+  override protected def test(testName: String, testTags: Tag*)(testBody: => Any)
+    (implicit pos: Position): Unit = {
+    if (excluded.contains(testName)) {
+      ignore(s"$testName (excluded)")(testBody)
+    } else {
+      super.test(testName, testTags: _*)(testBody)
+    }
   }
 
   /**

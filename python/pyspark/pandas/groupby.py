@@ -16,7 +16,7 @@
 #
 
 """
-A wrapper for GroupedData to behave similar to pandas GroupBy.
+A wrapper for GroupedData to behave like pandas GroupBy.
 """
 from abc import ABCMeta, abstractmethod
 import inspect
@@ -675,7 +675,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
         Notes
         -----
         `quantile` in pandas-on-Spark are using distributed percentile approximation
-        algorithm unlike pandas, the result might different with pandas, also
+        algorithm unlike pandas, the result might be different with pandas, also
         `interpolation` parameter is not supported yet.
 
         See Also
@@ -988,6 +988,8 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
 
         .. versionadded:: 3.4.0
 
+        .. deprecated:: 3.4.0
+
         Examples
         --------
         >>> df = ps.DataFrame({"A": [1, 2, 1, 1], "B": [True, False, False, True],
@@ -1010,6 +1012,11 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
         pyspark.pandas.Series.groupby
         pyspark.pandas.DataFrame.groupby
         """
+        warnings.warn(
+            "The 'mad' method is deprecated and will be removed in a future version. "
+            "To compute the same result, you may do `(group_df - group_df.mean()).abs().mean()`.",
+            FutureWarning,
+        )
         groupkey_names = [SPARK_INDEX_NAME_FORMAT(i) for i in range(len(self._groupkeys))]
         internal, agg_columns, sdf = self._prepare_reduce(
             groupkey_names=groupkey_names,
@@ -1916,7 +1923,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
 
         In case of Series, it works as below.
 
-        >>> def plus_max(x) -> ps.Series[np.int]:
+        >>> def plus_max(x) -> ps.Series[int]:
         ...     return x + x.max()
         >>> df.B.groupby(df.A).apply(plus_max).sort_index()  # doctest: +SKIP
         0    6
@@ -1932,9 +1939,9 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
         2    6
         Name: B, dtype: int64
 
-        You can also return a scalar value as a aggregated value of the group:
+        You can also return a scalar value as an aggregated value of the group:
 
-        >>> def plus_length(x) -> np.int:
+        >>> def plus_length(x) -> int:
         ...     return len(x)
         >>> df.B.groupby(df.A).apply(plus_length).sort_index()  # doctest: +SKIP
         0    1
@@ -1943,7 +1950,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
 
         The extra arguments to the function can be passed as below.
 
-        >>> def calculation(x, y, z) -> np.int:
+        >>> def calculation(x, y, z) -> int:
         ...     return len(x) + y * z
         >>> df.B.groupby(df.A).apply(calculation, 5, z=10).sort_index()  # doctest: +SKIP
         0    51
@@ -1989,7 +1996,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
         if should_infer_schema:
             # Here we execute with the first 1000 to get the return type.
             log_advice(
-                "If the type hints is not specified for `grouby.apply`, "
+                "If the type hints is not specified for `groupby.apply`, "
                 "it is expensive to infer the data type internally."
             )
             limit = get_option("compute.shortcut_limit")
@@ -2271,7 +2278,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
 
             pdf = func(pdf)
 
-            # If schema should be inferred, we don't restore index. pandas seems restoring
+            # If schema should be inferred, we don't restore the index. pandas seems to restore
             # the index in some cases.
             # When Spark output type is specified, without executing it, we don't know
             # if we should restore the index or not. For instance, see the example in
@@ -2644,7 +2651,19 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
         """
         return self.fillna(method="bfill", limit=limit)
 
-    backfill = bfill
+    def backfill(self, limit: Optional[int] = None) -> FrameLike:
+        """
+        Alias for bfill.
+
+        .. deprecated:: 3.4.0
+        """
+        warnings.warn(
+            "The GroupBy.backfill method is deprecated "
+            "and will be removed in a future version. "
+            "Use GroupBy.bfill instead.",
+            FutureWarning,
+        )
+        return self.bfill(limit=limit)
 
     def ffill(self, limit: Optional[int] = None) -> FrameLike:
         """
@@ -2695,7 +2714,19 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
         """
         return self.fillna(method="ffill", limit=limit)
 
-    pad = ffill
+    def pad(self, limit: Optional[int] = None) -> FrameLike:
+        """
+        Alias for ffill.
+
+        .. deprecated:: 3.4.0
+        """
+        warnings.warn(
+            "The GroupBy.pad method is deprecated "
+            "and will be removed in a future version. "
+            "Use GroupBy.ffill instead.",
+            FutureWarning,
+        )
+        return self.ffill(limit=limit)
 
     def _limit(self, n: int, asc: bool) -> FrameLike:
         """
@@ -2996,9 +3027,9 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
              ...     return x.apply("a string {}".format)
 
             When the given function has the return type annotated, the original index of the
-            GroupBy object will be lost and a default index will be attached to the result.
+            GroupBy object will be lost, and a default index will be attached to the result.
             Please be careful about configuring the default index. See also `Default Index Type
-            <https://koalas.readthedocs.io/en/latest/user_guide/options.html#default-index-type>`_.
+            <https://spark.apache.org/docs/latest/api/python/user_guide/pandas_on_spark/options.html#default-index-type>`_.
 
         .. note:: the series within ``func`` is actually a pandas series. Therefore,
             any pandas API within this function is allowed.
@@ -3046,7 +3077,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
         1  a string 2  a string 6
         2  a string 3  a string 5
 
-        >>> def plus_max(x) -> ps.Series[np.int]:
+        >>> def plus_max(x) -> ps.Series[int]:
         ...     return x + x.max()
         >>> g.transform(plus_max)  # doctest: +NORMALIZE_WHITESPACE
            B   C
@@ -3080,7 +3111,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
 
         You can also specify extra arguments to pass to the function.
 
-        >>> def calculation(x, y, z) -> ps.Series[np.int]:
+        >>> def calculation(x, y, z) -> ps.Series[int]:
         ...     return x + x.min() + y + z
         >>> g.transform(calculation, 5, z=20)  # doctest: +NORMALIZE_WHITESPACE
             B   C
@@ -3107,7 +3138,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
             # Here we execute with the first 1000 to get the return type.
             # If the records were less than 1000, it uses pandas API directly for a shortcut.
             log_advice(
-                "If the type hints is not specified for `grouby.transform`, "
+                "If the type hints is not specified for `groupby.transform`, "
                 "it is expensive to infer the data type internally."
             )
             limit = get_option("compute.shortcut_limit")
@@ -3238,7 +3269,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
 
         .. note:: 'min_periods' in pandas-on-Spark works as a fixed window size unlike pandas.
         Unlike pandas, NA is also counted as the period. This might be changed
-        in the near future.
+        soon.
 
         Parameters
         ----------
@@ -3267,7 +3298,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
 
         .. note:: 'min_periods' in pandas-on-Spark works as a fixed window size unlike pandas.
         Unlike pandas, NA is also counted as the period. This might be changed
-        in the near future.
+        soon.
 
         Parameters
         ----------
@@ -3299,7 +3330,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
 
         .. note:: 'min_periods' in pandas-on-Spark works as a fixed window size unlike pandas.
             Unlike pandas, NA is also counted as the period. This might be changed
-            in the near future.
+            soon.
 
         .. versionadded:: 3.4.0
 
@@ -3683,7 +3714,7 @@ class GroupBy(Generic[FrameLike], metaclass=ABCMeta):
         ) -> Iterator[Tuple[Series, Label]]:
             raise NotImplementedError(
                 "Duplicated labels with groupby() and "
-                "'compute.ops_on_diff_frames' option are not supported currently "
+                "'compute.ops_on_diff_frames' option is not supported currently "
                 "Please use unique labels in series and frames."
             )
 
@@ -4266,7 +4297,7 @@ class SeriesGroupBy(GroupBy[Series]):
         """
         Return unique values in group.
 
-        Uniques are returned in order of unknown. It does NOT sort.
+        Unique is returned in order of unknown. It does NOT sort.
 
         See Also
         --------

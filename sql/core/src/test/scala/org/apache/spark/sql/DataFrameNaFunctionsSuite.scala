@@ -279,10 +279,16 @@ class DataFrameNaFunctionsSuite extends QueryTest with SharedSparkSession {
     val (df1, df2) = createDFsWithSameFieldsName()
     val joined_df = df1.join(df2, Seq("f1"), joinType = "left_outer")
 
-    val message = intercept[AnalysisException] {
-      joined_df.na.fill("", cols = Seq("f2"))
-    }.getMessage
-    assert(message.contains("Reference 'f2' is ambiguous"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        joined_df.na.fill("", cols = Seq("f2"))
+      },
+      errorClass = "AMBIGUOUS_REFERENCE",
+      parameters = Map(
+        "name" -> "`f2`",
+        "referenceNames" -> "[`f2`, `f2`]"
+      )
+    )
   }
 
   test("fill with col(*)") {
@@ -293,10 +299,13 @@ class DataFrameNaFunctionsSuite extends QueryTest with SharedSparkSession {
 
   test("drop with col(*)") {
     val df = createDF()
-    val exception = intercept[AnalysisException] {
-      df.na.drop("any", Seq("*"))
-    }
-    assert(exception.getMessage.contains("Cannot resolve column name \"*\""))
+    checkError(
+      exception = intercept[AnalysisException] {
+        df.na.drop("any", Seq("*"))
+      },
+      errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+      parameters = Map("objectName" -> "`*`", "proposal" -> "`name`, `age`, `height`")
+    )
   }
 
   test("fill with nested columns") {
@@ -397,10 +406,16 @@ class DataFrameNaFunctionsSuite extends QueryTest with SharedSparkSession {
     val df = left.join(right, Seq("col1"))
 
     // If column names are specified, the following fails due to ambiguity.
-    val exception = intercept[AnalysisException] {
-      df.na.fill("hello", Seq("col2"))
-    }
-    assert(exception.getMessage.contains("Reference 'col2' is ambiguous"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        df.na.fill("hello", Seq("col2"))
+      },
+      errorClass = "AMBIGUOUS_REFERENCE",
+      parameters = Map(
+        "name" -> "`col2`",
+        "referenceNames" -> "[`col2`, `col2`]"
+      )
+    )
 
     // If column names are not specified, fill() is applied to all the eligible columns.
     checkAnswer(
@@ -414,10 +429,16 @@ class DataFrameNaFunctionsSuite extends QueryTest with SharedSparkSession {
     val df = left.join(right, Seq("col1"))
 
     // If column names are specified, the following fails due to ambiguity.
-    val exception = intercept[AnalysisException] {
-      df.na.drop("any", Seq("col2"))
-    }
-    assert(exception.getMessage.contains("Reference 'col2' is ambiguous"))
+    checkError(
+      exception = intercept[AnalysisException] {
+        df.na.drop("any", Seq("col2"))
+      },
+      errorClass = "AMBIGUOUS_REFERENCE",
+      parameters = Map(
+        "name" -> "`col2`",
+        "referenceNames" -> "[`col2`, `col2`]"
+      )
+    )
 
     // If column names are not specified, drop() is applied to all the eligible rows.
     checkAnswer(
@@ -516,7 +537,11 @@ class DataFrameNaFunctionsSuite extends QueryTest with SharedSparkSession {
     val exception = intercept[AnalysisException] {
       df.na.replace("aa", Map( "n/a" -> "unknown"))
     }
-    assert(exception.getMessage.equals("Cannot resolve column name \"aa\" among (Col.1, Col.2)"))
+    checkError(
+      exception = exception,
+      errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+      parameters = Map("objectName" -> "`aa`", "proposal" -> "`Col`.`1`, `Col`.`2`")
+    )
   }
 
   test("SPARK-34649: replace value of a nested column") {

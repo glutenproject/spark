@@ -368,7 +368,7 @@ class PandasOnSparkHistPlot(PandasHistPlot, HistogramPlotBase):
         self.data, self.bins = HistogramPlotBase.prepare_hist_data(self.data, self.bins)
 
     def _make_plot(self):
-        # TODO: this logic is similar with KdePlot. Might have to deduplicate it.
+        # TODO: this logic is similar to KdePlot. Might have to deduplicate it.
         # 'num_colors' requires to calculate `shape` which has to count all.
         # Use 1 for now to save the computation.
         colors = self._get_colors(num_colors=1)
@@ -837,6 +837,9 @@ def plot_frame(
         labels with "(right)" in the legend
     sort_columns: bool, default is False
         When True, will sort values on plots.
+
+        .. deprecated:: 3.4.0
+
     **kwds : keywords
         Options to pass to matplotlib plotting method
 

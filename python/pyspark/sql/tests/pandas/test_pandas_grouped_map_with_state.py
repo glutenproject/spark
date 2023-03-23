@@ -53,7 +53,7 @@ if have_pyarrow:
     not have_pandas or not have_pyarrow,
     cast(str, pandas_requirement_message or pyarrow_requirement_message),
 )
-class GroupedMapInPandasWithStateTests(ReusedSQLTestCase):
+class GroupedApplyInPandasWithStateTests(ReusedSQLTestCase):
     @classmethod
     def conf(cls):
         cfg = SparkConf()
@@ -240,7 +240,7 @@ if __name__ == "__main__":
     from pyspark.sql.tests.pandas.test_pandas_grouped_map_with_state import *  # noqa: F401
 
     try:
-        import xmlrunner  # type: ignore[import]
+        import xmlrunner
 
         testRunner = xmlrunner.XMLTestRunner(output="target/test-reports", verbosity=2)
     except ImportError:

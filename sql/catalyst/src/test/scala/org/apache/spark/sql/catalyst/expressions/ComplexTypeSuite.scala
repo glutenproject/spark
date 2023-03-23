@@ -17,7 +17,8 @@
 
 package org.apache.spark.sql.catalyst.expressions
 
-import org.apache.spark.SparkFunSuite
+import org.apache.spark.{SPARK_DOC_ROOT, SparkFunSuite, SparkRuntimeException}
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.analysis.{TypeCheckResult, UnresolvedExtractValue}
 import org.apache.spark.sql.catalyst.analysis.TypeCheckResult.DataTypeMismatch
@@ -27,7 +28,6 @@ import org.apache.spark.sql.catalyst.util._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
-
 
 class ComplexTypeSuite extends SparkFunSuite with ExpressionEvalHelper {
 
@@ -278,12 +278,17 @@ class ComplexTypeSuite extends SparkFunSuite with ExpressionEvalHelper {
       create_map(intSeq, strWithNull.map(_.value)))
 
     // Map key can't be null
-    checkExceptionInExpression[RuntimeException](
+    checkErrorInExpression[SparkRuntimeException](
       CreateMap(interlace(strWithNull, intSeq.map(Literal(_)))),
-      "Cannot use null as map key")
+      "NULL_MAP_KEY")
 
-    checkExceptionInExpression[RuntimeException](
-      CreateMap(Seq(Literal(1), Literal(2), Literal(1), Literal(3))), "Duplicate map key")
+    checkErrorInExpression[SparkRuntimeException](
+      CreateMap(Seq(Literal(1), Literal(2), Literal(1), Literal(3))),
+      errorClass = "DUPLICATED_MAP_KEY",
+      parameters = Map(
+        "key" -> "1",
+        "mapKeyDedupPolicy" -> "\"spark.sql.mapKeyDedupPolicy\"")
+    )
     withSQLConf(SQLConf.MAP_KEY_DEDUP_POLICY.key -> SQLConf.MapKeyDedupPolicy.LAST_WIN.toString) {
       // Duplicated map keys will be removed w.r.t. the last wins policy.
       checkEvaluation(
@@ -318,14 +323,16 @@ class ComplexTypeSuite extends SparkFunSuite with ExpressionEvalHelper {
 
     // expects a positive even number of arguments
     val map3 = CreateMap(Seq(Literal(1), Literal(2), Literal(3)))
-    assert(map3.checkInputDataTypes() ==
-      DataTypeMismatch(
-        errorSubClass = "WRONG_NUM_ARGS",
-        messageParameters = Map(
-          "functionName" -> "`map`",
-          "expectedNum" -> "2n (n > 0)",
-          "actualNum" -> "3")
-      )
+    checkError(
+      exception = intercept[AnalysisException] {
+        map3.checkInputDataTypes()
+      },
+      errorClass = "WRONG_NUM_ARGS.WITHOUT_SUGGESTION",
+      parameters = Map(
+        "functionName" -> "`map`",
+        "expectedNum" -> "2n (n > 0)",
+        "actualNum" -> "3",
+        "docroot" -> SPARK_DOC_ROOT)
     )
 
     // The given keys of function map should all be the same type
@@ -382,15 +389,19 @@ class ComplexTypeSuite extends SparkFunSuite with ExpressionEvalHelper {
     checkEvaluation(MapFromArrays(nullArray, nullArray), null)
 
     // Map key can't be null
-    checkExceptionInExpression[RuntimeException](
+    checkErrorInExpression[SparkRuntimeException](
       MapFromArrays(intWithNullArray, strArray),
-      "Cannot use null as map key")
+      "NULL_MAP_KEY")
 
-    checkExceptionInExpression[RuntimeException](
+    checkErrorInExpression[SparkRuntimeException](
       MapFromArrays(
         Literal.create(Seq(1, 1), ArrayType(IntegerType)),
         Literal.create(Seq(2, 3), ArrayType(IntegerType))),
-      "Duplicate map key")
+      errorClass = "DUPLICATED_MAP_KEY",
+      parameters = Map(
+        "key" -> "1",
+        "mapKeyDedupPolicy" -> "\"spark.sql.mapKeyDedupPolicy\"")
+    )
     withSQLConf(SQLConf.MAP_KEY_DEDUP_POLICY.key -> SQLConf.MapKeyDedupPolicy.LAST_WIN.toString) {
       // Duplicated map keys will be removed w.r.t. the last wins policy.
       checkEvaluation(
@@ -435,14 +446,16 @@ class ComplexTypeSuite extends SparkFunSuite with ExpressionEvalHelper {
 
     // expects a positive even number of arguments
     val namedStruct1 = CreateNamedStruct(Seq(Literal(1), Literal(2), Literal(3)))
-    assert(namedStruct1.checkInputDataTypes() ==
-      DataTypeMismatch(
-        errorSubClass = "WRONG_NUM_ARGS",
-        messageParameters = Map(
-          "functionName" -> "`named_struct`",
-          "expectedNum" -> "2n (n > 0)",
-          "actualNum" -> "3")
-      )
+    checkError(
+      exception = intercept[AnalysisException] {
+        namedStruct1.checkInputDataTypes()
+      },
+      errorClass = "WRONG_NUM_ARGS.WITHOUT_SUGGESTION",
+      parameters = Map(
+        "functionName" -> "`named_struct`",
+        "expectedNum" -> "2n (n > 0)",
+        "actualNum" -> "3",
+        "docroot" -> SPARK_DOC_ROOT)
     )
   }
 
@@ -458,27 +471,6 @@ class ComplexTypeSuite extends SparkFunSuite with ExpressionEvalHelper {
       "b", create_row(Seq("a", "b")))
     checkEvaluation(quickResolve($"c".struct($"a".int).at(0).getField("a")),
       1, create_row(create_row(1)))
-  }
-
-  test("error message of ExtractValue") {
-    val structType = StructType(StructField("a", StringType, true) :: Nil)
-    val otherType = StringType
-
-    def checkErrorMessage(
-      childDataType: DataType,
-      fieldDataType: DataType,
-      errorMessage: String): Unit = {
-      val e = intercept[org.apache.spark.sql.AnalysisException] {
-        ExtractValue(
-          Literal.create(null, childDataType),
-          Literal.create(null, fieldDataType),
-          _ == _)
-      }
-      assert(e.getMessage().contains(errorMessage))
-    }
-
-    checkErrorMessage(structType, IntegerType, "Field name should be String Literal")
-    checkErrorMessage(otherType, StringType, "Can't extract value from")
   }
 
   test("ensure to preserve metadata") {
@@ -527,10 +519,15 @@ class ComplexTypeSuite extends SparkFunSuite with ExpressionEvalHelper {
 
     val s6 = Literal("a=1&b=2&c=3")
     val m6 = Map("a" -> "1", "b" -> "2", "c" -> "3")
-    checkEvaluation(new StringToMap(s6, NonFoldableLiteral("&"), NonFoldableLiteral("=")), m6)
+    checkEvaluation(StringToMap(s6, NonFoldableLiteral("&"), NonFoldableLiteral("=")), m6)
 
-    checkExceptionInExpression[RuntimeException](
-      new StringToMap(Literal("a:1,b:2,a:3")), "Duplicate map key")
+    checkErrorInExpression[SparkRuntimeException](
+      new StringToMap(Literal("a:1,b:2,a:3")),
+      errorClass = "DUPLICATED_MAP_KEY",
+      parameters = Map(
+        "key" -> "a",
+        "mapKeyDedupPolicy" -> "\"spark.sql.mapKeyDedupPolicy\"")
+    )
     withSQLConf(SQLConf.MAP_KEY_DEDUP_POLICY.key -> SQLConf.MapKeyDedupPolicy.LAST_WIN.toString) {
       // Duplicated map keys will be removed w.r.t. the last wins policy.
       checkEvaluation(
@@ -540,11 +537,51 @@ class ComplexTypeSuite extends SparkFunSuite with ExpressionEvalHelper {
 
     // arguments checking
     assert(new StringToMap(Literal("a:1,b:2,c:3")).checkInputDataTypes().isSuccess)
-    assert(new StringToMap(Literal(null)).checkInputDataTypes().isFailure)
-    assert(new StringToMap(Literal("a:1,b:2,c:3"), Literal(null)).checkInputDataTypes().isFailure)
-    assert(StringToMap(Literal("a:1,b:2,c:3"), Literal(null), Literal(null))
-      .checkInputDataTypes().isFailure)
-    assert(new StringToMap(Literal(null), Literal(null)).checkInputDataTypes().isFailure)
+    assert(new StringToMap(Literal(null)).checkInputDataTypes() ==
+      DataTypeMismatch(
+        errorSubClass = "UNEXPECTED_INPUT_TYPE",
+        messageParameters = Map(
+          "paramIndex" -> "1",
+          "requiredType" -> "\"STRING\"",
+          "inputSql" -> "\"NULL\"",
+          "inputType" -> "\"VOID\""
+        )
+      )
+    )
+    assert(new StringToMap(Literal("a:1,b:2,c:3"), Literal(null)).checkInputDataTypes() ==
+      DataTypeMismatch(
+        errorSubClass = "UNEXPECTED_INPUT_TYPE",
+        messageParameters = Map(
+          "paramIndex" -> "2",
+          "requiredType" -> "\"STRING\"",
+          "inputSql" -> "\"NULL\"",
+          "inputType" -> "\"VOID\""
+        )
+      )
+    )
+    assert(StringToMap(Literal("a:1,b:2,c:3"), Literal(null),
+      Literal(null)).checkInputDataTypes() ==
+      DataTypeMismatch(
+        errorSubClass = "UNEXPECTED_INPUT_TYPE",
+        messageParameters = Map(
+          "paramIndex" -> "2",
+          "requiredType" -> "\"STRING\"",
+          "inputSql" -> "\"NULL\"",
+          "inputType" -> "\"VOID\""
+        )
+      )
+    )
+    assert(new StringToMap(Literal(null), Literal(null)).checkInputDataTypes() ==
+      DataTypeMismatch(
+        errorSubClass = "UNEXPECTED_INPUT_TYPE",
+        messageParameters = Map(
+          "paramIndex" -> "1",
+          "requiredType" -> "\"STRING\"",
+          "inputSql" -> "\"NULL\"",
+          "inputType" -> "\"VOID\""
+        )
+      )
+    )
   }
 
   test("SPARK-22693: CreateNamedStruct should not use global variables") {

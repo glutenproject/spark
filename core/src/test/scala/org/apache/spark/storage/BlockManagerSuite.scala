@@ -28,6 +28,7 @@ import scala.concurrent.{Future, TimeoutException}
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 import scala.reflect.ClassTag
+import scala.reflect.classTag
 
 import com.esotericsoftware.kryo.KryoException
 import org.apache.commons.lang3.RandomUtils
@@ -104,6 +105,7 @@ class BlockManagerSuite extends SparkFunSuite with Matchers with PrivateMethodTe
       .set(STORAGE_UNROLL_MEMORY_THRESHOLD, 512L)
       .set(Network.RPC_ASK_TIMEOUT, "5s")
       .set(PUSH_BASED_SHUFFLE_ENABLED, true)
+      .set(RDD_CACHE_VISIBILITY_TRACKING_ENABLED, true)
   }
 
   private def makeSortShuffleManager(conf: Option[SparkConf] = None): SortShuffleManager = {
@@ -295,7 +297,7 @@ class BlockManagerSuite extends SparkFunSuite with Matchers with PrivateMethodTe
     eventually(timeout(5.seconds)) {
       // make sure both bm1 and bm2 are registered at driver side BlockManagerMaster
       verify(master, times(2))
-        .registerBlockManager(mc.any(), mc.any(), mc.any(), mc.any(), mc.any())
+        .registerBlockManager(mc.any(), mc.any(), mc.any(), mc.any(), mc.any(), mc.any())
       assert(driverEndpoint.askSync[Boolean](
         CoarseGrainedClusterMessages.IsExecutorAlive(bm1Id.executorId)))
       assert(driverEndpoint.askSync[Boolean](
@@ -359,6 +361,44 @@ class BlockManagerSuite extends SparkFunSuite with Matchers with PrivateMethodTe
     master.removeRdd(0, true)
     master.removeBroadcast(0, true, true)
     master.removeShuffle(0, true)
+  }
+
+  test("SPARK-41360: Avoid block manager re-registration if the executor has been lost") {
+    // Set up a DriverEndpoint which always returns isExecutorAlive=false
+    rpcEnv.setupEndpoint(CoarseGrainedSchedulerBackend.ENDPOINT_NAME,
+      new RpcEndpoint {
+        override val rpcEnv: RpcEnv = BlockManagerSuite.this.rpcEnv
+
+        override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
+          case CoarseGrainedClusterMessages.RegisterExecutor(executorId, _, _, _, _, _, _, _) =>
+            context.reply(true)
+          case CoarseGrainedClusterMessages.IsExecutorAlive(executorId) =>
+            // always return false
+            context.reply(false)
+        }
+      }
+    )
+
+    // Set up a block manager endpoint and endpoint reference
+    val bmRef = rpcEnv.setupEndpoint(s"bm-0", new RpcEndpoint {
+      override val rpcEnv: RpcEnv = BlockManagerSuite.this.rpcEnv
+
+      private def reply[T](context: RpcCallContext, response: T): Unit = {
+        context.reply(response)
+      }
+
+      override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
+        case RemoveRdd(_) => reply(context, 1)
+        case RemoveBroadcast(_, _) => reply(context, 1)
+        case RemoveShuffle(_) => reply(context, true)
+      }
+    })
+    val bmId = BlockManagerId(s"exec-0", "localhost", 1234, None)
+    // Register the block manager with isReRegister = true
+    val updatedId = master.registerBlockManager(
+      bmId, Array.empty, 2000, 0, bmRef, isReRegister = true)
+    // The re-registration should fail since the executor is considered as dead by DriverEndpoint
+    assert(updatedId.executorId === BlockManagerId.INVALID_EXECUTOR_ID)
   }
 
   test("StorageLevel object caching") {
@@ -669,6 +709,22 @@ class BlockManagerSuite extends SparkFunSuite with Matchers with PrivateMethodTe
     val a1 = new Array[Byte](400)
     val a2 = new Array[Byte](400)
 
+    // Set up a DriverEndpoint which simulates the executor is alive (required by SPARK-41360)
+    rpcEnv.setupEndpoint(CoarseGrainedSchedulerBackend.ENDPOINT_NAME,
+      new RpcEndpoint {
+        override val rpcEnv: RpcEnv = BlockManagerSuite.this.rpcEnv
+
+        override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
+          case CoarseGrainedClusterMessages.IsExecutorAlive(executorId) =>
+            if (executorId == store.blockManagerId.executorId) {
+              context.reply(true)
+            } else {
+              context.reply(false)
+            }
+        }
+      }
+    )
+
     store.putSingle("a1", a1, StorageLevel.MEMORY_ONLY)
     assert(master.getLocations("a1").size > 0, "master was not told about a1")
 
@@ -918,13 +974,17 @@ class BlockManagerSuite extends SparkFunSuite with Matchers with PrivateMethodTe
   }
 
   test("SPARK-14252: getOrElseUpdate should still read from remote storage") {
-    val store = makeBlockManager(8000, "executor1")
+    val store = spy(makeBlockManager(8000, "executor1"))
     val store2 = makeBlockManager(8000, "executor2")
     val list1 = List(new Array[Byte](4000))
+    val blockId = RDDBlockId(0, 0)
     store2.putIterator(
-      "list1", list1.iterator, StorageLevel.MEMORY_ONLY, tellMaster = true)
-    assert(store.getOrElseUpdate(
-      "list1",
+      blockId, list1.iterator, StorageLevel.MEMORY_ONLY, tellMaster = true)
+
+    doAnswer { _ => true }.when(store).isRDDBlockVisible(mc.any())
+    assert(store.getOrElseUpdateRDDBlock(
+      0L,
+      blockId,
       StorageLevel.MEMORY_ONLY,
       ClassTag.Any,
       () => fail("attempted to compute locally")).isLeft)
@@ -2144,8 +2204,7 @@ class BlockManagerSuite extends SparkFunSuite with Matchers with PrivateMethodTe
     store.putSingle("my-block-id", new Array[User](300), StorageLevel.MEMORY_AND_DISK)
 
     val kryoException = intercept[KryoException] {
-      store.getOrElseUpdate("my-block-id", StorageLevel.MEMORY_AND_DISK, ClassTag.Object,
-        () => List(new Array[User](1)).iterator)
+      store.get("my-block-id")
     }
     assert(kryoException.getMessage === "java.io.IOException: Input/output error")
     assertUpdateBlockInfoReportedForRemovingBlock(store, "my-block-id",
@@ -2207,9 +2266,167 @@ class BlockManagerSuite extends SparkFunSuite with Matchers with PrivateMethodTe
       }.getMessage
       assert(e.contains("TimeoutException"))
       verify(master, times(0))
-        .registerBlockManager(mc.any(), mc.any(), mc.any(), mc.any(), mc.any())
+        .registerBlockManager(mc.any(), mc.any(), mc.any(), mc.any(), mc.any(), mc.any())
       server.close()
     }
+  }
+
+  test("SPARK-41497: getOrElseUpdateRDDBlock do compute based on cache visibility statue") {
+    val store = makeBlockManager(8000, "executor1")
+    val blockId = RDDBlockId(rddId = 1, splitIndex = 1)
+    var computed: Boolean = false
+    val data = Seq(1, 2, 3)
+    val makeIterator = () => {
+      computed = true
+      data.iterator
+    }
+
+    // Cache doesn't exist and is not visible.
+    assert(store.getStatus(blockId).isEmpty && !store.isRDDBlockVisible(blockId))
+    val res1 = store.getOrElseUpdateRDDBlock(
+      1, blockId, StorageLevel.MEMORY_ONLY, classTag[Int], makeIterator)
+    // Put cache successfully and reported block task info.
+    assert(res1.isLeft && computed)
+    verify(master, times(1)).updateRDDBlockTaskInfo(blockId, 1)
+    assert(store.getStatus(blockId).nonEmpty && !store.isRDDBlockVisible(blockId))
+
+    // Cache exists but not visible.
+    computed = false
+    val res2 = store.getOrElseUpdateRDDBlock(
+      1, blockId, StorageLevel.MEMORY_ONLY, classTag[Int], makeIterator)
+    // Load cache successfully and reported block task info.
+    assert(res2.isLeft && computed)
+    assert(!store.isRDDBlockVisible(blockId))
+    verify(master, times(2)).updateRDDBlockTaskInfo(blockId, 1)
+
+    // Cache exists and visible.
+    store.blockInfoManager.tryMarkBlockAsVisible(blockId)
+    computed = false
+    assert(store.getStatus(blockId).nonEmpty && store.isRDDBlockVisible(blockId))
+    val res3 = store.getOrElseUpdateRDDBlock(
+      1, blockId, StorageLevel.MEMORY_ONLY, classTag[Int], makeIterator)
+    // Load cache successfully but not report block task info.
+    assert(res3.isLeft && !computed)
+    verify(master, times(2)).updateRDDBlockTaskInfo(blockId, 1)
+  }
+
+
+  test("SPARK-41497: mark rdd block as visible") {
+    val store = makeBlockManager(8000, "executor1")
+    val blockId = RDDBlockId(rddId = 1, splitIndex = 1)
+    val data = Seq(1, 2, 3)
+    store.putIterator(blockId, data.iterator, StorageLevel.MEMORY_ONLY, tellMaster = true)
+    assert(store.getStatus(blockId).nonEmpty)
+    assert(!store.blockInfoManager.isRDDBlockVisible(blockId))
+    assert(store.blockInfoManager.containsInvisibleRDDBlock(blockId))
+
+    // Mark rdd block as visible.
+    store.blockInfoManager.tryMarkBlockAsVisible(blockId)
+    assert(store.blockInfoManager.isRDDBlockVisible(blockId))
+    assert(!store.blockInfoManager.containsInvisibleRDDBlock(blockId))
+
+    // Cache the block again should not change the visibility status.
+    store.putIterator(blockId, data.iterator, StorageLevel.MEMORY_ONLY, tellMaster = true)
+    assert(store.blockInfoManager.isRDDBlockVisible(blockId))
+    assert(!store.blockInfoManager.containsInvisibleRDDBlock(blockId))
+
+    // Remove rdd block.
+    store.removeBlock(blockId)
+    assert(!store.blockInfoManager.isRDDBlockVisible(blockId))
+    assert(!store.blockInfoManager.containsInvisibleRDDBlock(blockId))
+
+    // Visibility status should not be added once rdd is removed.
+    store.blockInfoManager.tryMarkBlockAsVisible(blockId)
+    assert(!store.blockInfoManager.isRDDBlockVisible(blockId))
+    assert(!store.blockInfoManager.containsInvisibleRDDBlock(blockId))
+  }
+
+
+  test("SPARK-41497: master & manager interaction about rdd block visibility information") {
+    val store1 = makeBlockManager(8000, "executor1")
+    val store2 = makeBlockManager(8000, "executor2")
+    val store3 = makeBlockManager(8000, "executor3")
+
+    val taskId = 0L
+    val blockId = RDDBlockId(rddId = 1, splitIndex = 1)
+    val data = Seq(1, 2, 3)
+
+    store1.getOrElseUpdateRDDBlock(
+      taskId, blockId, StorageLevel.MEMORY_ONLY, classTag[Int], () => data.iterator)
+    // Block information is reported and block is not visible.
+    assert(master.getLocations(blockId).nonEmpty)
+    assert(!master.isRDDBlockVisible(blockId))
+    assert(store1.blockInfoManager.containsInvisibleRDDBlock(blockId))
+
+    // A copy is reported, visibility status not changed.
+    store2.putIterator(blockId, data.iterator, StorageLevel.MEMORY_ONLY)
+    assert(master.getLocations(blockId).length === 2)
+    assert(!master.isRDDBlockVisible(blockId))
+    assert(store2.blockInfoManager.containsInvisibleRDDBlock(blockId))
+
+    // Report rdd block visibility as true, driver should ask block managers to mark the block
+    // as visible.
+    master.updateRDDBlockVisibility(taskId, visible = true)
+    eventually(timeout(5.seconds)) {
+      assert(master.isRDDBlockVisible(blockId))
+      assert(store1.blockInfoManager.isRDDBlockVisible(blockId))
+      assert(store2.blockInfoManager.isRDDBlockVisible(blockId))
+    }
+
+    // Visibility status should be updated right after block reported since it's already visible.
+    assert(!store3.blockInfoManager.isRDDBlockVisible(blockId))
+    store3.putIterator(blockId, data.iterator, StorageLevel.MEMORY_ONLY)
+    eventually(timeout(5.seconds)) {
+      assert(store3.blockInfoManager.isRDDBlockVisible(blockId))
+    }
+  }
+
+
+  test("SPARK-41497: rdd block's visibility status should be cached once got from driver") {
+    val store = makeBlockManager(8000, "executor1")
+    val taskId = 0L
+    val blockId = RDDBlockId(rddId = 1, splitIndex = 1)
+    val data = Seq(1, 2, 3)
+
+    store.getOrElseUpdateRDDBlock(
+      taskId, blockId, StorageLevel.MEMORY_ONLY, classTag[Int], () => data.iterator)
+    // Block information is reported and block is not visible.
+    assert(master.getLocations(blockId).nonEmpty)
+    assert(!master.isRDDBlockVisible(blockId))
+    assert(store.blockInfoManager.containsInvisibleRDDBlock(blockId))
+
+    doAnswer(_ => true).when(master).isRDDBlockVisible(mc.any())
+    // Visibility status should be cached.
+    assert(store.isRDDBlockVisible(blockId))
+    assert(!store.blockInfoManager.containsInvisibleRDDBlock(blockId))
+    assert(store.blockInfoManager.isRDDBlockVisible(blockId))
+  }
+
+  test("SPARK-41497: getOrElseUpdateRDDBlock should make sure accumulators updated when block" +
+    " already exist but still not visible") {
+    val store = makeBlockManager(8000, "executor1")
+    val taskId = 0L
+    val blockId = RDDBlockId(rddId = 1, splitIndex = 1)
+    val data = Seq(1, 2, 3)
+    val acc = new LongAccumulator
+    val makeIterator = () => {
+      data.iterator.map { x =>
+        acc.add(1)
+        x
+      }
+    }
+
+    store.getOrElseUpdateRDDBlock(
+      taskId, blockId, StorageLevel.MEMORY_ONLY, classTag[Int], makeIterator)
+    // Block cached but not visible.
+    assert(master.getLocations(blockId).nonEmpty)
+    assert(!master.isRDDBlockVisible(blockId))
+    assert(acc.value === 3)
+
+    store.getOrElseUpdateRDDBlock(
+      taskId, blockId, StorageLevel.MEMORY_ONLY, classTag[Int], makeIterator)
+    // Accumulator should be updated even though block already exists.
+    assert(acc.value === 6)
   }
 
   private def createKryoSerializerWithDiskCorruptedInputStream(): KryoSerializer = {

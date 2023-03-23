@@ -172,12 +172,13 @@ select 1234567890123456789012345678901234567890
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.catalyst.parser.ParseException
+org.apache.spark.SparkArithmeticException
 {
-  "errorClass" : "_LEGACY_ERROR_TEMP_1229",
+  "errorClass" : "DECIMAL_PRECISION_EXCEEDS_MAX_PRECISION",
+  "sqlState" : "22003",
   "messageParameters" : {
-    "decimalType" : "decimal",
-    "precision" : "38"
+    "maxPrecision" : "38",
+    "precision" : "40"
   }
 }
 
@@ -187,12 +188,13 @@ select 1234567890123456789012345678901234567890.0
 -- !query schema
 struct<>
 -- !query output
-org.apache.spark.sql.catalyst.parser.ParseException
+org.apache.spark.SparkArithmeticException
 {
-  "errorClass" : "_LEGACY_ERROR_TEMP_1229",
+  "errorClass" : "DECIMAL_PRECISION_EXCEEDS_MAX_PRECISION",
+  "sqlState" : "22003",
   "messageParameters" : {
-    "decimalType" : "decimal",
-    "precision" : "38"
+    "maxPrecision" : "38",
+    "precision" : "41"
   }
 }
 
@@ -261,7 +263,7 @@ struct<>
 org.apache.spark.sql.catalyst.parser.ParseException
 {
   "errorClass" : "PARSE_SYNTAX_ERROR",
-  "sqlState" : "42000",
+  "sqlState" : "42601",
   "messageParameters" : {
     "error" : "'.'",
     "hint" : ""
@@ -390,10 +392,11 @@ struct<>
 -- !query output
 org.apache.spark.sql.catalyst.parser.ParseException
 {
-  "errorClass" : "_LEGACY_ERROR_TEMP_0019",
+  "errorClass" : "INVALID_TYPED_LITERAL",
+  "sqlState" : "42604",
   "messageParameters" : {
-    "value" : "mar 11 2016",
-    "valueType" : "DATE"
+    "value" : "'mar 11 2016'",
+    "valueType" : "\"DATE\""
   },
   "queryContext" : [ {
     "objectType" : "",
@@ -420,10 +423,11 @@ struct<>
 -- !query output
 org.apache.spark.sql.catalyst.parser.ParseException
 {
-  "errorClass" : "_LEGACY_ERROR_TEMP_0019",
+  "errorClass" : "INVALID_TYPED_LITERAL",
+  "sqlState" : "42604",
   "messageParameters" : {
-    "value" : "2016-33-11 20:54:00.000",
-    "valueType" : "TIMESTAMP"
+    "value" : "'2016-33-11 20:54:00.000'",
+    "valueType" : "\"TIMESTAMP\""
   },
   "queryContext" : [ {
     "objectType" : "",
@@ -443,6 +447,7 @@ struct<>
 org.apache.spark.sql.catalyst.parser.ParseException
 {
   "errorClass" : "UNSUPPORTED_TYPED_LITERAL",
+  "sqlState" : "0A000",
   "messageParameters" : {
     "supportedTypes" : "\"DATE\", \"TIMESTAMP_NTZ\", \"TIMESTAMP_LTZ\", \"TIMESTAMP\", \"INTERVAL\", \"X\"",
     "unsupportedType" : "\"GEO\""
@@ -474,7 +479,7 @@ org.apache.spark.sql.catalyst.parser.ParseException
 {
   "errorClass" : "_LEGACY_ERROR_TEMP_0061",
   "messageParameters" : {
-    "msg" : "decimal can only support precision up to 38."
+    "msg" : "[DECIMAL_PRECISION_EXCEEDS_MAX_PRECISION] Decimal precision 40 exceeds max precision 38."
   },
   "queryContext" : [ {
     "objectType" : "",
@@ -501,9 +506,11 @@ struct<>
 -- !query output
 org.apache.spark.sql.catalyst.parser.ParseException
 {
-  "errorClass" : "_LEGACY_ERROR_TEMP_0022",
+  "errorClass" : "INVALID_TYPED_LITERAL",
+  "sqlState" : "42604",
   "messageParameters" : {
-    "msg" : "contains illegal character for hexBinary: 0XuZ"
+    "value" : "'XuZ'",
+    "valueType" : "\"X\""
   },
   "queryContext" : [ {
     "objectType" : "",
@@ -531,6 +538,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "inputSql" : "\"DATE '1999-01-01'\"",
     "inputType" : "\"DATE\"",
@@ -556,6 +564,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "inputSql" : "\"TIMESTAMP '1999-01-01 00:00:00'\"",
     "inputType" : "\"TIMESTAMP\"",
@@ -589,6 +598,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "inputSql" : "\"map(1, 2)\"",
     "inputType" : "\"MAP<INT, INT>\"",
@@ -614,6 +624,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "inputSql" : "\"array(1, 2)\"",
     "inputType" : "\"ARRAY<INT>\"",
@@ -639,6 +650,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "inputSql" : "\"named_struct(a, 1, b, spark)\"",
     "inputType" : "\"STRUCT<a: INT, b: STRING>\"",
@@ -664,6 +676,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "inputSql" : "\"X'01'\"",
     "inputType" : "\"BINARY\"",
@@ -689,6 +702,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "inputSql" : "\"DATE '1999-01-01'\"",
     "inputType" : "\"DATE\"",
@@ -714,6 +728,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "inputSql" : "\"TIMESTAMP '1999-01-01 00:00:00'\"",
     "inputType" : "\"TIMESTAMP\"",
@@ -739,6 +754,7 @@ struct<>
 org.apache.spark.sql.AnalysisException
 {
   "errorClass" : "DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE",
+  "sqlState" : "42K09",
   "messageParameters" : {
     "inputSql" : "\"X'2379ACFE'\"",
     "inputType" : "\"BINARY\"",

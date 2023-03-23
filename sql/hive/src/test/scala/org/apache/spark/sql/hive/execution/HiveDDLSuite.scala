@@ -156,16 +156,21 @@ class HiveCatalogedDDLSuite extends DDLSuite with TestHiveSingleton with BeforeA
   }
 
   test("SPARK-22431: illegal nested type") {
-    val queries = Seq(
-      "CREATE TABLE t USING hive AS SELECT STRUCT('a' AS `$a`, 1 AS b) q",
-      "CREATE TABLE t(q STRUCT<`$a`:INT, col2:STRING>, i1 INT) USING hive")
+    checkError(
+      exception = intercept[SparkException] {
+        spark.sql("CREATE TABLE t USING hive AS SELECT STRUCT('a' AS `$a`, 1 AS b) q")
+      },
+      errorClass = "CANNOT_RECOGNIZE_HIVE_TYPE",
+      parameters = Map("fieldType" -> "\"STRUCT<$A:STRING,B:INT>\"", "fieldName" -> "`q`")
+    )
 
-    queries.foreach(query => {
-      val err = intercept[SparkException] {
-        spark.sql(query)
-      }.getMessage
-      assert(err.contains("Cannot recognize hive type string"))
-    })
+    checkError(
+      exception = intercept[SparkException] {
+        spark.sql("CREATE TABLE t(q STRUCT<`$a`:INT, col2:STRING>, i1 INT) USING hive")
+      },
+      errorClass = "CANNOT_RECOGNIZE_HIVE_TYPE",
+      parameters = Map("fieldType" -> "\"STRUCT<$A:INT,COL2:STRING>\"", "fieldName" -> "`q`")
+    )
 
     withView("v") {
       spark.sql("CREATE VIEW v AS SELECT STRUCT('a' AS `a`, 1 AS b) q")
@@ -549,10 +554,10 @@ class HiveDDLSuite
   }
 
   test("create table: partition column names exist in table definition") {
-    assertAnalysisError(
+    assertAnalysisErrorClass(
       "CREATE TABLE tbl(a int) PARTITIONED BY (a string)",
-      "Found duplicate column(s) in the table definition of " +
-        s"`$SESSION_CATALOG_NAME`.`default`.`tbl`: `a`")
+      "COLUMN_ALREADY_EXISTS",
+      Map("columnName" -> "`a`"))
   }
 
   test("create partitioned table without specifying data type for the partition columns") {
@@ -1052,9 +1057,17 @@ class HiveDDLSuite
   test("drop table using drop view") {
     withTable("tab1") {
       sql("CREATE TABLE tab1(c1 int)")
-      assertAnalysisError(
-        "DROP VIEW tab1",
-        "Cannot drop a view with DROP TABLE. Please use DROP VIEW instead")
+      assertAnalysisErrorClass(
+        sqlText = "DROP VIEW tab1",
+        errorClass = "WRONG_COMMAND_FOR_OBJECT_TYPE",
+        parameters = Map(
+          "alternative" -> "DROP TABLE",
+          "operation" -> "DROP VIEW",
+          "foundType" -> "MANAGED",
+          "requiredType" -> "VIEW",
+          "objectName" -> "spark_catalog.default.tab1"
+        )
+      )
     }
   }
 
@@ -1063,9 +1076,17 @@ class HiveDDLSuite
       spark.range(10).write.saveAsTable("tab1")
       withView("view1") {
         sql("CREATE VIEW view1 AS SELECT * FROM tab1")
-        assertAnalysisError(
-          "DROP TABLE view1",
-          "Cannot drop a view with DROP TABLE. Please use DROP VIEW instead")
+        assertAnalysisErrorClass(
+          sqlText = "DROP TABLE view1",
+          errorClass = "WRONG_COMMAND_FOR_OBJECT_TYPE",
+          parameters = Map(
+            "alternative" -> "DROP VIEW",
+            "operation" -> "DROP TABLE",
+            "foundType" -> "VIEW",
+            "requiredType" -> "EXTERNAL or MANAGED",
+            "objectName" -> "spark_catalog.default.view1"
+          )
+        )
       }
     }
   }
@@ -2356,14 +2377,16 @@ class HiveDDLSuite
           sql("CREATE TABLE tab (c1 int) PARTITIONED BY (c2 int) STORED AS PARQUET")
           if (!caseSensitive) {
             // duplicating partitioning column name
-            assertAnalysisError(
+            assertAnalysisErrorClass(
               "ALTER TABLE tab ADD COLUMNS (C2 string)",
-              "Found duplicate column(s)")
+              "COLUMN_ALREADY_EXISTS",
+              Map("columnName" -> "`c2`"))
 
             // duplicating data column name
-            assertAnalysisError(
+            assertAnalysisErrorClass(
               "ALTER TABLE tab ADD COLUMNS (C1 string)",
-              "Found duplicate column(s)")
+              "COLUMN_ALREADY_EXISTS",
+              Map("columnName" -> "`c1`"))
           } else {
             // hive catalog will still complains that c1 is duplicate column name because hive
             // identifiers are case insensitive.
@@ -2942,12 +2965,17 @@ class HiveDDLSuite
         spark.range(1).createTempView("v")
         withTempPath { path =>
           Seq("PARQUET", "ORC").foreach { format =>
-            val e = intercept[SparkException] {
-              spark.sql(s"INSERT OVERWRITE LOCAL DIRECTORY '${path.getCanonicalPath}' " +
-                s"STORED AS $format SELECT ID, if(1=1, 1, 0), abs(id), '^-' FROM v")
-            }.getCause.getMessage
-            assert(e.contains("Column name \"(IF((1 = 1), 1, 0))\" contains" +
-              " invalid character(s). Please use alias to rename it."))
+            checkError(
+              exception = intercept[SparkException] {
+                spark.sql(s"INSERT OVERWRITE LOCAL DIRECTORY '${path.getCanonicalPath}' " +
+                  s"STORED AS $format SELECT ID, if(1=1, 1, 0), abs(id), '^-' FROM v")
+              }.getCause.asInstanceOf[AnalysisException],
+              errorClass = "INVALID_COLUMN_NAME_AS_PATH",
+              parameters = Map(
+                "datasource" -> "HiveFileFormat",
+                "columnName" -> "`(IF((1 = 1), 1, 0))`"
+              )
+            )
           }
         }
       }
@@ -2959,18 +2987,20 @@ class HiveDDLSuite
       withView("v") {
         spark.range(1).createTempView("v")
         withTempPath { path =>
-          val e = intercept[SparkException] {
-            spark.sql(
-              s"""
-                 |INSERT OVERWRITE LOCAL DIRECTORY '${path.getCanonicalPath}'
-                 |STORED AS PARQUET
-                 |SELECT
-                 |NAMED_STRUCT('ID', ID, 'IF(ID=1,ID,0)', IF(ID=1,ID,0), 'B', ABS(ID)) AS col1
-                 |FROM v
+          checkError(
+            exception = intercept[SparkException] {
+              spark.sql(
+                s"""
+                   |INSERT OVERWRITE LOCAL DIRECTORY '${path.getCanonicalPath}'
+                   |STORED AS PARQUET
+                   |SELECT
+                   |NAMED_STRUCT('ID', ID, 'IF(ID=1,ID,0)', IF(ID=1,ID,0), 'B', ABS(ID)) AS col1
+                   |FROM v
                """.stripMargin)
-          }.getCause.getMessage
-          assert(e.contains("Column name \"IF(ID=1,ID,0)\" contains invalid character(s). " +
-            "Please use alias to rename it."))
+            }.getCause.asInstanceOf[AnalysisException],
+            errorClass = "INVALID_COLUMN_NAME_AS_PATH",
+            parameters = Map("datasource" -> "HiveFileFormat", "columnName" -> "`IF(ID=1,ID,0)`")
+          )
         }
       }
     }

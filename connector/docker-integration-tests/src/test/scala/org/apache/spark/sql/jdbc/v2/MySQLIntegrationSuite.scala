@@ -29,17 +29,38 @@ import org.apache.spark.sql.types._
 import org.apache.spark.tags.DockerTest
 
 /**
- * To run this test suite for a specific version (e.g., mysql:5.7.36):
+ * To run this test suite for a specific version (e.g., mysql:8.0.31):
  * {{{
- *   ENABLE_DOCKER_INTEGRATION_TESTS=1 MYSQL_DOCKER_IMAGE_NAME=mysql:5.7.36
+ *   ENABLE_DOCKER_INTEGRATION_TESTS=1 MYSQL_DOCKER_IMAGE_NAME=mysql:8.0.31
  *     ./build/sbt -Pdocker-integration-tests "testOnly *v2*MySQLIntegrationSuite"
  * }}}
  */
 @DockerTest
 class MySQLIntegrationSuite extends DockerJDBCIntegrationV2Suite with V2JDBCTest {
+
+  override def excluded: Seq[String] = Seq(
+    "scan with aggregate push-down: VAR_POP with DISTINCT",
+    "scan with aggregate push-down: VAR_SAMP with DISTINCT",
+    "scan with aggregate push-down: STDDEV_POP with DISTINCT",
+    "scan with aggregate push-down: STDDEV_SAMP with DISTINCT",
+    "scan with aggregate push-down: COVAR_POP with DISTINCT",
+    "scan with aggregate push-down: COVAR_POP without DISTINCT",
+    "scan with aggregate push-down: COVAR_SAMP with DISTINCT",
+    "scan with aggregate push-down: COVAR_SAMP without DISTINCT",
+    "scan with aggregate push-down: CORR with DISTINCT",
+    "scan with aggregate push-down: CORR without DISTINCT",
+    "scan with aggregate push-down: REGR_INTERCEPT with DISTINCT",
+    "scan with aggregate push-down: REGR_INTERCEPT without DISTINCT",
+    "scan with aggregate push-down: REGR_SLOPE with DISTINCT",
+    "scan with aggregate push-down: REGR_SLOPE without DISTINCT",
+    "scan with aggregate push-down: REGR_R2 with DISTINCT",
+    "scan with aggregate push-down: REGR_R2 without DISTINCT",
+    "scan with aggregate push-down: REGR_SXY with DISTINCT",
+    "scan with aggregate push-down: REGR_SXY without DISTINCT")
+
   override val catalogName: String = "mysql"
   override val db = new DatabaseOnDocker {
-    override val imageName = sys.env.getOrElse("MYSQL_DOCKER_IMAGE_NAME", "mysql:5.7.36")
+    override val imageName = sys.env.getOrElse("MYSQL_DOCKER_IMAGE_NAME", "mysql:8.0.31")
     override val env = Map(
       "MYSQL_ROOT_PASSWORD" -> "rootpass"
     )
@@ -55,6 +76,8 @@ class MySQLIntegrationSuite extends DockerJDBCIntegrationV2Suite with V2JDBCTest
     .set("spark.sql.catalog.mysql", classOf[JDBCTableCatalog].getName)
     .set("spark.sql.catalog.mysql.url", db.getJdbcUrl(dockerIp, externalPort))
     .set("spark.sql.catalog.mysql.pushDownAggregate", "true")
+    .set("spark.sql.catalog.mysql.pushDownLimit", "true")
+    .set("spark.sql.catalog.mysql.pushDownOffset", "true")
 
   override val connectionTimeout = timeout(7.minutes)
 
@@ -122,9 +145,4 @@ class MySQLIntegrationSuite extends DockerJDBCIntegrationV2Suite with V2JDBCTest
   override def supportListIndexes: Boolean = true
 
   override def indexOptions: String = "KEY_BLOCK_SIZE=10"
-
-  testVarPop()
-  testVarSamp()
-  testStddevPop()
-  testStddevSamp()
 }

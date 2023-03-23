@@ -451,7 +451,7 @@ class Index(IndexOpsMixin):
                 with option_context("compute.default_index_type", "distributed-sequence"):
                     # Directly using Series from both self and other seems causing
                     # some exceptions when 'compute.ops_on_diff_frames' is enabled.
-                    # Working around for now via using frame.
+                    # Working around for now via using frames.
                     return (
                         cast(Series, self.to_series("self").reset_index(drop=True))
                         == cast(Series, other.to_series("other").reset_index(drop=True))
@@ -524,7 +524,7 @@ class Index(IndexOpsMixin):
 
     def _to_pandas(self) -> pd.Index:
         """
-        Same as `to_pandas()`, without issueing the advice log for internal usage.
+        Same as `to_pandas()`, without issuing the advice log for internal usage.
         """
         return self._to_internal_pandas().copy()
 
@@ -540,9 +540,9 @@ class Index(IndexOpsMixin):
         dtype : str or numpy.dtype, optional
             The dtype to pass to :meth:`numpy.asarray`
         copy : bool, default False
-            Whether to ensure that the returned value is a not a view on
+            Whether to ensure that the returned value is not a view on
             another array. Note that ``copy=False`` does not *ensure* that
-            ``to_numpy()`` is no-copy. Rather, ``copy=True`` ensure that
+            ``to_numpy()`` is no-copy. Rather, ``copy=True`` ensures that
             a copy is made, even if not strictly necessary.
 
         Returns
@@ -645,6 +645,8 @@ class Index(IndexOpsMixin):
         .. note:: This method should only be used if the resulting NumPy ndarray is expected
             to be small, as all the data is loaded into the driver's memory.
 
+        .. deprecated:: 3.4.0
+
         Returns
         -------
         numpy.ndarray
@@ -660,7 +662,11 @@ class Index(IndexOpsMixin):
         >>> ps.Index(['a', 'b', 'c']).asi8 is None
         True
         """
-        warnings.warn("We recommend using `{}.to_numpy()` instead.".format(type(self).__name__))
+        warnings.warn(
+            "Index.asi8 is deprecated and will be removed in a future version. "
+            "We recommend using `{}.to_numpy()` instead.".format(type(self).__name__),
+            FutureWarning,
+        )
         if isinstance(self.spark.data_type, IntegralType):
             return self.to_numpy()
         elif isinstance(self.spark.data_type, (TimestampType, TimestampNTZType)):
@@ -777,7 +783,7 @@ class Index(IndexOpsMixin):
     def rename(self, name: Union[Name, List[Name]], inplace: bool = False) -> Optional["Index"]:
         """
         Alter Index or MultiIndex name.
-        Able to set new names without level. Defaults to returning new index.
+        Able to set new names without level. Defaults to returning a new index.
 
         Parameters
         ----------
@@ -1082,7 +1088,7 @@ class Index(IndexOpsMixin):
 
     def is_integer(self) -> bool:
         """
-        Return if the current index type is a integer type.
+        Return if the current index type is an integer type.
 
         Examples
         --------
@@ -1115,7 +1121,7 @@ class Index(IndexOpsMixin):
 
     def is_object(self) -> bool:
         """
-        Return if the current index type is a object type.
+        Return if the current index type is an object type.
 
         Examples
         --------
@@ -1127,6 +1133,8 @@ class Index(IndexOpsMixin):
     def is_type_compatible(self, kind: str) -> bool:
         """
         Whether the index type is compatible with the provided type.
+
+        .. deprecated:: 3.4.0
 
         Examples
         --------
@@ -1140,6 +1148,10 @@ class Index(IndexOpsMixin):
         >>> psidx.is_type_compatible('floating')
         True
         """
+        warnings.warn(
+            "Index.is_type_compatible is deprecated and will be removed in a " "future version",
+            FutureWarning,
+        )
         return kind == self.inferred_type
 
     def dropna(self, how: str = "any") -> "Index":
@@ -2185,6 +2197,8 @@ class Index(IndexOpsMixin):
         remember that since pandas-on-Spark does not support multiple data types in an index,
         so it returns True if any type of data is datetime.
 
+        .. deprecated:: 3.4.0
+
         Examples
         --------
         >>> from datetime import datetime
@@ -2210,6 +2224,11 @@ class Index(IndexOpsMixin):
         >>> idx.is_all_dates
         False
         """
+        warnings.warn(
+            "Index.is_all_dates is deprecated, will be removed in a future version.  "
+            "check index.inferred_type instead",
+            FutureWarning,
+        )
         return isinstance(self.spark.data_type, (TimestampType, TimestampNTZType))
 
     def repeat(self, repeats: int) -> "Index":

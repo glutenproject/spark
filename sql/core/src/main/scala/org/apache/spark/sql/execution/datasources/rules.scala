@@ -78,9 +78,10 @@ class ResolveSQLOnFile(sparkSession: SparkSession) extends Rule[LogicalPlan] {
         case e: Exception =>
           // the provider is valid, but failed to create a logical plan
           u.failAnalysis(
-            errorClass = "_LEGACY_ERROR_TEMP_2332",
-            messageParameters = Map("msg" -> e.getMessage),
-            cause = e)
+            errorClass = "UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY",
+            messageParameters = Map("dataSourceType" -> u.multipartIdentifier.head),
+            cause = e
+          )
       }
   }
 }
@@ -244,13 +245,11 @@ case class PreprocessTableCreation(sparkSession: SparkSession) extends Rule[Logi
     case create: V2CreateTablePlan if create.childrenResolved =>
       val schema = create.tableSchema
       val partitioning = create.partitioning
-      val identifier = create.tableName
       val isCaseSensitive = conf.caseSensitiveAnalysis
       // Check that columns are not duplicated in the schema
       val flattenedSchema = SchemaUtils.explodeNestedFieldNames(schema)
       SchemaUtils.checkColumnNameDuplication(
         flattenedSchema,
-        s"in the table definition of $identifier",
         isCaseSensitive)
 
       // Check that columns are not duplicated in the partitioning statement
@@ -289,7 +288,6 @@ case class PreprocessTableCreation(sparkSession: SparkSession) extends Rule[Logi
   private def normalizeCatalogTable(schema: StructType, table: CatalogTable): CatalogTable = {
     SchemaUtils.checkSchemaColumnNameDuplication(
       schema,
-      "in the table definition of " + table.identifier,
       conf.caseSensitiveAnalysis)
 
     val normalizedPartCols = normalizePartitionColumns(schema, table)
@@ -316,10 +314,7 @@ case class PreprocessTableCreation(sparkSession: SparkSession) extends Rule[Logi
       partCols = table.partitionColumnNames,
       resolver = conf.resolver)
 
-    SchemaUtils.checkColumnNameDuplication(
-      normalizedPartitionCols,
-      "in the partition schema",
-      conf.resolver)
+    SchemaUtils.checkColumnNameDuplication(normalizedPartitionCols, conf.resolver)
 
     if (schema.nonEmpty && normalizedPartitionCols.length == schema.length) {
       failAnalysis("Cannot use all columns for partition columns")
@@ -344,11 +339,9 @@ case class PreprocessTableCreation(sparkSession: SparkSession) extends Rule[Logi
 
         SchemaUtils.checkColumnNameDuplication(
           normalizedBucketSpec.bucketColumnNames,
-          "in the bucket definition",
           conf.resolver)
         SchemaUtils.checkColumnNameDuplication(
           normalizedBucketSpec.sortColumnNames,
-          "in the sort definition",
           conf.resolver)
 
         normalizedBucketSpec.sortColumnNames.map(schema(_)).map(_.dataType).foreach {

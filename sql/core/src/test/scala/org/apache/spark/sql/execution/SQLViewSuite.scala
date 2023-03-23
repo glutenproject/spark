@@ -81,22 +81,28 @@ abstract class SQLViewSuite extends QueryTest with SQLTestUtils {
       withTempView("temp_jtv1") {
         withGlobalTempView("global_temp_jtv1") {
           sql("CREATE TEMPORARY VIEW temp_jtv1 AS SELECT * FROM jt WHERE id > 3")
-          var e = intercept[AnalysisException] {
-            sql("CREATE VIEW jtv1 AS SELECT * FROM temp_jtv1 WHERE id < 6")
-          }.getMessage
-          assert(e.contains("Not allowed to create a permanent view " +
-            s"`$SESSION_CATALOG_NAME`.`default`.`jtv1` by " +
-            "referencing a temporary view temp_jtv1. " +
-            "Please create a temp view instead by CREATE TEMP VIEW"))
-
+          checkError(
+            exception = intercept[AnalysisException] {
+              sql("CREATE VIEW jtv1 AS SELECT * FROM temp_jtv1 WHERE id < 6")
+            },
+            errorClass = "INVALID_TEMP_OBJ_REFERENCE",
+            parameters = Map(
+              "obj" -> "VIEW",
+              "objName" -> s"`$SESSION_CATALOG_NAME`.`default`.`jtv1`",
+              "tempObj" -> "VIEW",
+              "tempObjName" -> "`temp_jtv1`"))
           val globalTempDB = spark.sharedState.globalTempViewManager.database
           sql("CREATE GLOBAL TEMP VIEW global_temp_jtv1 AS SELECT * FROM jt WHERE id > 0")
-          e = intercept[AnalysisException] {
-            sql(s"CREATE VIEW jtv1 AS SELECT * FROM $globalTempDB.global_temp_jtv1 WHERE id < 6")
-          }.getMessage
-          assert(e.contains("Not allowed to create a permanent view " +
-            s"`$SESSION_CATALOG_NAME`.`default`.`jtv1` by " +
-            "referencing a temporary view global_temp.global_temp_jtv1"))
+          checkError(
+            exception = intercept[AnalysisException] {
+              sql(s"CREATE VIEW jtv1 AS SELECT * FROM $globalTempDB.global_temp_jtv1 WHERE id < 6")
+            },
+            errorClass = "INVALID_TEMP_OBJ_REFERENCE",
+            parameters = Map(
+              "obj" -> "VIEW",
+              "objName" -> s"`$SESSION_CATALOG_NAME`.`default`.`jtv1`",
+              "tempObj" -> "VIEW",
+              "tempObjName" -> "`global_temp`.`global_temp_jtv1`"))
         }
       }
     }
@@ -218,10 +224,13 @@ abstract class SQLViewSuite extends QueryTest with SQLTestUtils {
       }.getMessage
       assert(e4.contains(
         s"$viewName is a temp view. 'ANALYZE TABLE' expects a table or permanent view."))
-      val e5 = intercept[AnalysisException] {
-        sql(s"ANALYZE TABLE $viewName COMPUTE STATISTICS FOR COLUMNS id")
-      }.getMessage
-      assert(e5.contains(s"Temporary view `$viewName` is not cached for analyzing columns."))
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"ANALYZE TABLE $viewName COMPUTE STATISTICS FOR COLUMNS id")
+        },
+        errorClass = "UNSUPPORTED_FEATURE.ANALYZE_UNCACHED_TEMP_VIEW",
+        parameters = Map("viewName" -> "`testView`")
+      )
     }
   }
 
@@ -311,7 +320,8 @@ abstract class SQLViewSuite extends QueryTest with SQLTestUtils {
     val e = intercept[AnalysisException] {
       sql("CREATE OR REPLACE TEMPORARY VIEW default.myabcdview AS SELECT * FROM jt")
     }
-    assert(e.message.contains("It is not allowed to add database prefix"))
+    assert(e.message.contains(
+      "CREATE TEMPORARY VIEW or the corresponding Dataset APIs only accept single-part view names"))
   }
 
   test("error handling: disallow IF NOT EXISTS for CREATE TEMPORARY VIEW") {
@@ -951,9 +961,10 @@ abstract class SQLViewSuite extends QueryTest with SQLTestUtils {
               sql("SELECT * FROM v3")
             }
             checkError(e,
-              errorClass = "COLUMN_NOT_IN_GROUP_BY_CLAUSE",
+              errorClass = "MISSING_AGGREGATION",
               parameters = Map(
-                "expression" -> "\"c1\""))
+                "expression" -> "\"c1\"",
+                "expressionAnyValue" -> "\"any_value(c1)\""))
           }
           withSQLConf(GROUP_BY_ALIASES.key -> "false") {
             val e = intercept[AnalysisException] {

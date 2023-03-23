@@ -32,13 +32,23 @@ class SparkConnectServiceStub(object):
         """
         self.ExecutePlan = channel.unary_stream(
             "/spark.connect.SparkConnectService/ExecutePlan",
-            request_serializer=spark_dot_connect_dot_base__pb2.Request.SerializeToString,
-            response_deserializer=spark_dot_connect_dot_base__pb2.Response.FromString,
+            request_serializer=spark_dot_connect_dot_base__pb2.ExecutePlanRequest.SerializeToString,
+            response_deserializer=spark_dot_connect_dot_base__pb2.ExecutePlanResponse.FromString,
         )
         self.AnalyzePlan = channel.unary_unary(
             "/spark.connect.SparkConnectService/AnalyzePlan",
-            request_serializer=spark_dot_connect_dot_base__pb2.Request.SerializeToString,
-            response_deserializer=spark_dot_connect_dot_base__pb2.AnalyzeResponse.FromString,
+            request_serializer=spark_dot_connect_dot_base__pb2.AnalyzePlanRequest.SerializeToString,
+            response_deserializer=spark_dot_connect_dot_base__pb2.AnalyzePlanResponse.FromString,
+        )
+        self.Config = channel.unary_unary(
+            "/spark.connect.SparkConnectService/Config",
+            request_serializer=spark_dot_connect_dot_base__pb2.ConfigRequest.SerializeToString,
+            response_deserializer=spark_dot_connect_dot_base__pb2.ConfigResponse.FromString,
+        )
+        self.AddArtifacts = channel.stream_unary(
+            "/spark.connect.SparkConnectService/AddArtifacts",
+            request_serializer=spark_dot_connect_dot_base__pb2.AddArtifactsRequest.SerializeToString,
+            response_deserializer=spark_dot_connect_dot_base__pb2.AddArtifactsResponse.FromString,
         )
 
 
@@ -46,7 +56,10 @@ class SparkConnectServiceServicer(object):
     """Main interface for the SparkConnect service."""
 
     def ExecutePlan(self, request, context):
-        """Executes a request that contains the query and returns a stream of [[Response]]."""
+        """Executes a request that contains the query and returns a stream of [[Response]].
+
+        It is guaranteed that there is at least one ARROW batch returned even if the result set is empty.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
@@ -57,18 +70,42 @@ class SparkConnectServiceServicer(object):
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def Config(self, request, context):
+        """Update or fetch the configurations and returns a [[ConfigResponse]] containing the result."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def AddArtifacts(self, request_iterator, context):
+        """Add artifacts to the session and returns a [[AddArtifactsResponse]] containing metadata about
+        the added artifacts.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
 
 def add_SparkConnectServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
         "ExecutePlan": grpc.unary_stream_rpc_method_handler(
             servicer.ExecutePlan,
-            request_deserializer=spark_dot_connect_dot_base__pb2.Request.FromString,
-            response_serializer=spark_dot_connect_dot_base__pb2.Response.SerializeToString,
+            request_deserializer=spark_dot_connect_dot_base__pb2.ExecutePlanRequest.FromString,
+            response_serializer=spark_dot_connect_dot_base__pb2.ExecutePlanResponse.SerializeToString,
         ),
         "AnalyzePlan": grpc.unary_unary_rpc_method_handler(
             servicer.AnalyzePlan,
-            request_deserializer=spark_dot_connect_dot_base__pb2.Request.FromString,
-            response_serializer=spark_dot_connect_dot_base__pb2.AnalyzeResponse.SerializeToString,
+            request_deserializer=spark_dot_connect_dot_base__pb2.AnalyzePlanRequest.FromString,
+            response_serializer=spark_dot_connect_dot_base__pb2.AnalyzePlanResponse.SerializeToString,
+        ),
+        "Config": grpc.unary_unary_rpc_method_handler(
+            servicer.Config,
+            request_deserializer=spark_dot_connect_dot_base__pb2.ConfigRequest.FromString,
+            response_serializer=spark_dot_connect_dot_base__pb2.ConfigResponse.SerializeToString,
+        ),
+        "AddArtifacts": grpc.stream_unary_rpc_method_handler(
+            servicer.AddArtifacts,
+            request_deserializer=spark_dot_connect_dot_base__pb2.AddArtifactsRequest.FromString,
+            response_serializer=spark_dot_connect_dot_base__pb2.AddArtifactsResponse.SerializeToString,
         ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -98,8 +135,8 @@ class SparkConnectService(object):
             request,
             target,
             "/spark.connect.SparkConnectService/ExecutePlan",
-            spark_dot_connect_dot_base__pb2.Request.SerializeToString,
-            spark_dot_connect_dot_base__pb2.Response.FromString,
+            spark_dot_connect_dot_base__pb2.ExecutePlanRequest.SerializeToString,
+            spark_dot_connect_dot_base__pb2.ExecutePlanResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -127,8 +164,66 @@ class SparkConnectService(object):
             request,
             target,
             "/spark.connect.SparkConnectService/AnalyzePlan",
-            spark_dot_connect_dot_base__pb2.Request.SerializeToString,
-            spark_dot_connect_dot_base__pb2.AnalyzeResponse.FromString,
+            spark_dot_connect_dot_base__pb2.AnalyzePlanRequest.SerializeToString,
+            spark_dot_connect_dot_base__pb2.AnalyzePlanResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+        )
+
+    @staticmethod
+    def Config(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/spark.connect.SparkConnectService/Config",
+            spark_dot_connect_dot_base__pb2.ConfigRequest.SerializeToString,
+            spark_dot_connect_dot_base__pb2.ConfigResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+        )
+
+    @staticmethod
+    def AddArtifacts(
+        request_iterator,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.stream_unary(
+            request_iterator,
+            target,
+            "/spark.connect.SparkConnectService/AddArtifacts",
+            spark_dot_connect_dot_base__pb2.AddArtifactsRequest.SerializeToString,
+            spark_dot_connect_dot_base__pb2.AddArtifactsResponse.FromString,
             options,
             channel_credentials,
             insecure,

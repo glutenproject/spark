@@ -21,7 +21,10 @@ from typing import Any, Dict, List, Optional
 
 from py4j.java_gateway import JavaObject, java_import
 
-from pyspark.sql.utils import StreamingQueryException
+from pyspark.errors import StreamingQueryException
+from pyspark.errors.exceptions.captured import (
+    StreamingQueryException as CapturedStreamingQueryException,
+)
 from pyspark.sql.streaming.listener import StreamingQueryListener
 
 __all__ = ["StreamingQuery", "StreamingQueryManager"]
@@ -183,7 +186,7 @@ class StreamingQuery:
         >>> sdf = spark.readStream.format("rate").load()
         >>> sq = sdf.writeStream.format('memory').queryName('query_awaitTermination').start()
 
-        Return wheter the query has terminated or not within 5 seconds
+        Return whether the query has terminated or not within 5 seconds
 
         >>> sq.awaitTermination(5)
         False
@@ -387,7 +390,7 @@ class StreamingQuery:
             je = self._jsq.exception().get()
             msg = je.toString().split(": ", 1)[1]  # Drop the Java StreamingQueryException type info
             stackTrace = "\n\t at ".join(map(lambda x: x.toString(), je.getStackTrace()))
-            return StreamingQueryException(msg, stackTrace, je.getCause())
+            return CapturedStreamingQueryException(msg, stackTrace, je.getCause())
         else:
             return None
 
@@ -517,7 +520,7 @@ class StreamingQueryManager:
         >>> sdf = spark.readStream.format("rate").load()
         >>> sq = sdf.writeStream.format('memory').queryName('this_query').start()
 
-        Return wheter any of the query on the associated SparkSession
+        Return whether any of the query on the associated SparkSession
         has terminated or not within 5 seconds
 
         >>> spark.streams.awaitAnyTermination(5)

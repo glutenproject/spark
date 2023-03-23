@@ -110,7 +110,7 @@ object SchemaConverters {
           StructField(f.name, schemaType.dataType, schemaType.nullable)
         }
 
-        SchemaType(StructType(fields.toSeq), nullable = false)
+        SchemaType(StructType(fields.toArray), nullable = false)
 
       case ARRAY =>
         val schemaType = toSqlTypeHelper(avroSchema.getElementType, existingRecordNames)
@@ -127,7 +127,7 @@ object SchemaConverters {
       case UNION =>
         if (avroSchema.getTypes.asScala.exists(_.getType == NULL)) {
           // In case of a union with null, eliminate it and make a recursive call
-          val remainingUnionTypes = avroSchema.getTypes.asScala.filterNot(_.getType == NULL)
+          val remainingUnionTypes = AvroUtils.nonNullUnionBranches(avroSchema)
           if (remainingUnionTypes.size == 1) {
             toSqlTypeHelper(remainingUnionTypes.head, existingRecordNames).copy(nullable = true)
           } else {
@@ -151,7 +151,7 @@ object SchemaConverters {
                 StructField(s"member$i", schemaType.dataType, nullable = true)
             }
 
-            SchemaType(StructType(fields.toSeq), nullable = false)
+            SchemaType(StructType(fields.toArray), nullable = false)
         }
 
       case other => throw new IncompatibleSchemaException(s"Unsupported type $other")

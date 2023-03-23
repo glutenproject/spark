@@ -18,6 +18,7 @@
 """
 Date/Time related functions on pandas-on-Spark Series
 """
+import warnings
 from typing import Any, Optional, Union, no_type_check
 
 import numpy as np
@@ -115,11 +116,19 @@ class DatetimeMethods:
     def nanosecond(self) -> "ps.Series":
         raise NotImplementedError()
 
+    # TODO(SPARK-42617): Support isocalendar.week and replace it.
+    # See also https://github.com/pandas-dev/pandas/pull/33595.
     @property
     def week(self) -> "ps.Series":
         """
         The week ordinal of the year.
+
+        .. deprecated:: 3.4.0
         """
+        warnings.warn(
+            "weekofyear and week have been deprecated.",
+            FutureWarning,
+        )
         return self._data.spark.transform(lambda c: F.weekofyear(c).cast(LongType()))
 
     @property
@@ -534,7 +543,7 @@ class DatetimeMethods:
 
         The time component of the date-time is converted to midnight i.e.
         00:00:00. This is useful in cases, when the time does not matter.
-        Length is unaltered. The timezones are unaffected.
+        Length is unaltered. The time zones are unaffected.
 
         This method is available on Series with datetime values under
         the ``.dt`` accessor, and directly on Datetime Array.
@@ -572,7 +581,7 @@ class DatetimeMethods:
 
         Return an series of formatted strings specified by date_format, which
         supports the same string format as the python standard library. Details
-        of the string format can be found in python string format
+        of the string format can be found in the python string format
         doc.
 
         Parameters

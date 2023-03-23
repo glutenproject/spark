@@ -23,7 +23,7 @@ import java.time.{Instant, LocalDateTime, ZoneId}
 import java.util.{Locale, TimeZone}
 import java.util.concurrent.TimeUnit
 
-import org.apache.spark.{SparkConf, SparkException, SparkUpgradeException}
+import org.apache.spark.{SPARK_DOC_ROOT, SparkConf, SparkException, SparkUpgradeException}
 import org.apache.spark.sql.catalyst.util.DateTimeTestUtils.{CEST, LA}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.functions._
@@ -49,6 +49,20 @@ class DateFunctionsSuite extends QueryTest with SharedSparkSession {
       sql("""SELECT CURDATE()""").collect().head.getDate(0))
     val d4 = DateTimeUtils.currentDate(ZoneId.systemDefault())
     assert(d0 <= d1 && d1 <= d2 && d2 <= d3 && d3 <= d4 && d4 - d0 <= 1)
+
+    checkError(
+      exception = intercept[AnalysisException] {
+        sql("SELECT CURDATE(1)")
+      },
+      errorClass = "WRONG_NUM_ARGS.WITHOUT_SUGGESTION",
+      parameters = Map(
+        "functionName" -> "`curdate`",
+        "expectedNum" -> "0",
+        "actualNum" -> "1",
+        "docroot" -> SPARK_DOC_ROOT
+      ),
+      context = ExpectedContext("", "", 7, 16, "CURDATE(1)")
+    )
   }
 
   test("function current_timestamp and now") {

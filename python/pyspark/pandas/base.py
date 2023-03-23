@@ -18,6 +18,7 @@
 """
 Base and utility classes for pandas-on-Spark objects.
 """
+import warnings
 from abc import ABCMeta, abstractmethod
 from functools import wraps, partial
 from itertools import chain
@@ -211,7 +212,7 @@ def column_op(f: Callable[..., Column]) -> Callable[..., SeriesOrIndex]:
         from pyspark.pandas.indexes.base import Index
         from pyspark.pandas.series import Series
 
-        # It is possible for the function `f` takes other arguments than Spark Column.
+        # It is possible for the function `f` to take other arguments than Spark Column.
         # To cover this case, explicitly check if the argument is pandas-on-Spark Series and
         # extract Spark Column. For other arguments, they are used as are.
         cols = [arg for arg in args if isinstance(arg, (Series, Index))]
@@ -271,7 +272,7 @@ def numpy_column_op(f: Callable[..., Column]) -> Callable[..., SeriesOrIndex]:
 class IndexOpsMixin(object, metaclass=ABCMeta):
     """common ops mixin to support a unified interface / docs for Series / Index
 
-    Assuming there are following attributes or properties and function.
+    Assuming there are following attributes or properties and functions.
     """
 
     @property
@@ -326,8 +327,9 @@ class IndexOpsMixin(object, metaclass=ABCMeta):
     def __truediv__(self, other: Any) -> SeriesOrIndex:
         """
         __truediv__ has different behaviour between pandas and PySpark for several cases.
-        1. When divide np.inf by zero, PySpark returns null whereas pandas returns np.inf
-        2. When divide positive number by zero, PySpark returns null whereas pandas returns np.inf
+        1. When dividing np.inf by zero, PySpark returns null whereas pandas returns np.inf
+        2. When dividing a positive number by zero, PySpark returns null
+        whereas pandas returns np.inf
         3. When divide -np.inf by zero, PySpark returns null whereas pandas returns -np.inf
         4. When divide negative number by zero, PySpark returns null whereas pandas returns -np.inf
 
@@ -360,8 +362,9 @@ class IndexOpsMixin(object, metaclass=ABCMeta):
     def __floordiv__(self, other: Any) -> SeriesOrIndex:
         """
         __floordiv__ has different behaviour between pandas and PySpark for several cases.
-        1. When divide np.inf by zero, PySpark returns null whereas pandas returns np.inf
-        2. When divide positive number by zero, PySpark returns null whereas pandas returns np.inf
+        1. When dividing np.inf by zero, PySpark returns null whereas pandas returns np.inf
+        2. When dividing a positive number by zero, PySpark returns null
+        whereas pandas returns np.inf
         3. When divide -np.inf by zero, PySpark returns null whereas pandas returns -np.inf
         4. When divide negative number by zero, PySpark returns null whereas pandas returns -np.inf
 
@@ -491,7 +494,7 @@ class IndexOpsMixin(object, metaclass=ABCMeta):
     @property
     def empty(self) -> bool:
         """
-        Returns true if the current object is empty. Otherwise, returns false.
+        Returns true if the current object is empty. Otherwise, it returns false.
 
         >>> ps.range(10).id.empty
         False
@@ -536,11 +539,13 @@ class IndexOpsMixin(object, metaclass=ABCMeta):
 
         .. note:: the current implementation of is_monotonic requires to shuffle
             and aggregate multiple times to check the order locally and globally,
-            which is potentially expensive. In case of multi-index, all data are
-            transferred to single node which can easily cause out-of-memory error currently.
+            which is potentially expensive. In case of multi-index, all data is
+            transferred to a single node which can easily cause out-of-memory errors.
 
         .. note:: Disable the Spark config `spark.sql.optimizer.nestedSchemaPruning.enabled`
             for multi-index if you're using pandas-on-Spark < 1.7.0 with PySpark 3.1.1.
+
+        .. deprecated:: 3.4.0
 
         Returns
         -------
@@ -603,9 +608,88 @@ class IndexOpsMixin(object, metaclass=ABCMeta):
         >>> midx.is_monotonic
         False
         """
+        warnings.warn(
+            "is_monotonic is deprecated and will be removed in a future version. "
+            "Use is_monotonic_increasing instead.",
+            FutureWarning,
+        )
         return self._is_monotonic("increasing")
 
-    is_monotonic_increasing = is_monotonic
+    @property
+    def is_monotonic_increasing(self) -> bool:
+        """
+        Return boolean if values in the object are monotonically increasing.
+
+        .. note:: the current implementation of is_monotonic_increasing requires to shuffle
+            and aggregate multiple times to check the order locally and globally,
+            which is potentially expensive. In case of multi-index, all data is
+            transferred to a single node which can easily cause out-of-memory errors.
+
+        .. note:: Disable the Spark config `spark.sql.optimizer.nestedSchemaPruning.enabled`
+            for multi-index if you're using pandas-on-Spark < 1.7.0 with PySpark 3.1.1.
+
+        Returns
+        -------
+        is_monotonic : bool
+
+        Examples
+        --------
+        >>> ser = ps.Series(['1/1/2018', '3/1/2018', '4/1/2018'])
+        >>> ser.is_monotonic_increasing
+        True
+
+        >>> df = ps.DataFrame({'dates': [None, '1/1/2018', '2/1/2018', '3/1/2018']})
+        >>> df.dates.is_monotonic_increasing
+        False
+
+        >>> df.index.is_monotonic_increasing
+        True
+
+        >>> ser = ps.Series([1])
+        >>> ser.is_monotonic_increasing
+        True
+
+        >>> ser = ps.Series([])
+        >>> ser.is_monotonic_increasing
+        True
+
+        >>> ser.rename("a").to_frame().set_index("a").index.is_monotonic_increasing
+        True
+
+        >>> ser = ps.Series([5, 4, 3, 2, 1], index=[1, 2, 3, 4, 5])
+        >>> ser.is_monotonic_increasing
+        False
+
+        >>> ser.index.is_monotonic_increasing
+        True
+
+        Support for MultiIndex
+
+        >>> midx = ps.MultiIndex.from_tuples(
+        ... [('x', 'a'), ('x', 'b'), ('y', 'c'), ('y', 'd'), ('z', 'e')])
+        >>> midx  # doctest: +SKIP
+        MultiIndex([('x', 'a'),
+                    ('x', 'b'),
+                    ('y', 'c'),
+                    ('y', 'd'),
+                    ('z', 'e')],
+                   )
+        >>> midx.is_monotonic_increasing
+        True
+
+        >>> midx = ps.MultiIndex.from_tuples(
+        ... [('z', 'a'), ('z', 'b'), ('y', 'c'), ('y', 'd'), ('x', 'e')])
+        >>> midx  # doctest: +SKIP
+        MultiIndex([('z', 'a'),
+                    ('z', 'b'),
+                    ('y', 'c'),
+                    ('y', 'd'),
+                    ('x', 'e')],
+                   )
+        >>> midx.is_monotonic_increasing
+        False
+        """
+        return self._is_monotonic("increasing")
 
     @property
     def is_monotonic_decreasing(self) -> bool:
@@ -614,8 +698,8 @@ class IndexOpsMixin(object, metaclass=ABCMeta):
 
         .. note:: the current implementation of is_monotonic_decreasing requires to shuffle
             and aggregate multiple times to check the order locally and globally,
-            which is potentially expensive. In case of multi-index, all data are transferred
-            to single node which can easily cause out-of-memory error currently.
+            which is potentially expensive. In case of multi-index, all data is transferred
+            to a single node which can easily cause out-of-memory errors.
 
         .. note:: Disable the Spark config `spark.sql.optimizer.nestedSchemaPruning.enabled`
             for multi-index if you're using pandas-on-Spark < 1.7.0 with PySpark 3.1.1.
@@ -730,7 +814,7 @@ class IndexOpsMixin(object, metaclass=ABCMeta):
         )
 
         # Now we're windowing the aggregation results without partition specification.
-        # The number of rows here will be as the same of partitions, which is expected
+        # The number of rows here will be the same as partitions, which is expected
         # to be small.
         window = Window.orderBy(F.col("__partition_id")).rowsBetween(-1, -1)
         if order == "increasing":
@@ -891,7 +975,7 @@ class IndexOpsMixin(object, metaclass=ABCMeta):
         Detect existing (non-missing) values.
 
         Return a boolean same-sized object indicating if the values are NA.
-        NA values, such as None or numpy.NaN, gets mapped to True values.
+        NA values, such as None or numpy.NaN, get mapped to True values.
         Everything else gets mapped to False values. Characters such as empty strings '' or
         numpy.inf are not considered NA values
         (unless you set pandas.options.mode.use_inf_as_na = True).
@@ -1058,7 +1142,7 @@ class IndexOpsMixin(object, metaclass=ABCMeta):
         """
         Return whether any element is True.
 
-        Returns False unless there at least one element within a series that is
+        Returns False unless there is at least one element within a series that is
         True or equivalent (e.g. non-zero or non-empty).
 
         Parameters
@@ -1124,9 +1208,9 @@ class IndexOpsMixin(object, metaclass=ABCMeta):
         Shift Series/Index by desired number of periods.
 
         .. note:: the current implementation of shift uses Spark's Window without
-            specifying partition specification. This leads to move all data into
-            single partition in single machine and could cause serious
-            performance degradation. Avoid this method against very large dataset.
+            specifying partition specification. This leads to moveing all data into
+            a single partition in a single machine and could cause serious
+            performance degradation. Avoid this method with very large datasets.
 
         Parameters
         ----------
@@ -1538,6 +1622,8 @@ class IndexOpsMixin(object, metaclass=ABCMeta):
         na_sentinel : int or None, default -1
             Value to mark "not found". If None, will not drop the NaN
             from the uniques of the values.
+
+            .. deprecated:: 3.4.0
 
         Returns
         -------

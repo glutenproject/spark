@@ -27,7 +27,7 @@ license: |
 ## Apache Maven
 
 The Maven-based build is the build of reference for Apache Spark.
-Building Spark using Maven requires Maven 3.8.6 and Java 8.
+Building Spark using Maven requires Maven 3.8.7 and Java 8.
 Spark requires Scala 2.12/2.13; support for Scala 2.11 was removed in Spark 3.0.0.
 
 ### Setting up Maven's Memory Usage
@@ -47,7 +47,7 @@ You can fix these problems by setting the `MAVEN_OPTS` variable as discussed bef
 **Note:**
 
 * If using `build/mvn` with no `MAVEN_OPTS` set, the script will automatically add the above options to the `MAVEN_OPTS` environment variable.
-* The `test` phase of the Spark build will automatically add these options to `MAVEN_OPTS`, even when not using `build/mvn`.    
+* The `test` phase of the Spark build will automatically add these options to `MAVEN_OPTS`, even when not using `build/mvn`.
 
 ### build/mvn
 
@@ -118,6 +118,10 @@ For instance, you can build the Spark Streaming module using:
     ./build/mvn -pl :spark-streaming_{{site.SCALA_BINARY_VERSION}} clean install
 
 where `spark-streaming_{{site.SCALA_BINARY_VERSION}}` is the `artifactId` as defined in `streaming/pom.xml` file.
+
+## Building with Spark Connect support
+
+    ./build/mvn -Pconnect -DskipTests clean package
 
 ## Continuous Compilation
 
@@ -286,8 +290,8 @@ If use an individual repository or a repository on GitHub Enterprise, export bel
 
 ### Related environment variables
 
-<table class="table">
-<tr><th>Variable Name</th><th>Default</th><th>Meaning</th></tr>
+<table class="table table-striped">
+<thead><tr><th>Variable Name</th><th>Default</th><th>Meaning</th></tr></thead>
 <tr>
   <td><code>SPARK_PROJECT_URL</code></td>
   <td>https://github.com/apache/spark</td>
@@ -317,3 +321,21 @@ To build and run tests on IPv6-only environment, the following configurations ar
     export MAVEN_OPTS="-Djava.net.preferIPv6Addresses=true"
     export SBT_OPTS="-Djava.net.preferIPv6Addresses=true"
     export SERIAL_SBT_TESTS=1
+
+### Building with user-defined `protoc`
+
+When the user cannot use the official `protoc` binary files to build the `core` module in the compilation environment, for example, compiling `core` module on CentOS 6 or CentOS 7 which the default `glibc` version is less than 2.14, we can try to compile and test by specifying the user-defined `protoc` binary files as follows:
+
+```bash
+export SPARK_PROTOC_EXEC_PATH=/path-to-protoc-exe
+./build/mvn -Puser-defined-protoc -DskipDefaultProtoc clean package
+```
+
+or
+
+```bash
+export SPARK_PROTOC_EXEC_PATH=/path-to-protoc-exe
+./build/sbt -Puser-defined-protoc clean package
+```
+
+The user-defined `protoc` binary files can be produced in the user's compilation environment by source code compilation, for compilation steps, please refer to [protobuf](https://github.com/protocolbuffers/protobuf).

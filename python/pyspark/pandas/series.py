@@ -16,7 +16,7 @@
 #
 
 """
-A wrapper class for Spark Column to behave similar to pandas Series.
+A wrapper class for Spark Column to behave like pandas Series.
 """
 import datetime
 import re
@@ -134,7 +134,7 @@ if TYPE_CHECKING:
     from pyspark.pandas.indexes import Index
     from pyspark.pandas.spark.accessors import SparkIndexOpsMethods
 
-# This regular expression pattern is complied and defined here to avoid to compile the same
+# This regular expression pattern is compiled and defined here to avoid to compile the same
 # pattern every time it is used in _repr_ in Series.
 # This pattern basically seeks the footer string from pandas'
 REPR_PATTERN = re.compile(r"Length: (?P<length>[0-9]+)")
@@ -147,6 +147,7 @@ Equivalent to ``{equiv}``
 Parameters
 ----------
 other : Series or scalar value
+fill_value : Scalar value, default None
 
 Returns
 -------
@@ -379,7 +380,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         Values must be hashable and have the same length as `data`.
         Non-unique index values are allowed. Will default to
         RangeIndex (0, 1, 2, ..., n) if not provided. If both a dict and index
-        sequence are used, the index will override the keys found in the
+        sequence is used, the index will override the keys found in the
         dict.
     dtype : numpy.dtype or None
         If None, dtype will be inferred
@@ -496,7 +497,17 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         return [self.index]
 
     # Arithmetic Operators
-    def add(self, other: Any) -> "Series":
+    def add(self, other: Any, fill_value: Union[int, str, float] = None) -> "Series":
+        if fill_value is not None:
+            if isinstance(other, (int, str, float)):
+                scol = self.spark.column
+                scol = F.when(scol.isNull() | F.isnan(scol), fill_value).otherwise(scol)
+                self = self._with_new_scol(scol)
+            else:
+                raise NotImplementedError(
+                    "`fill_value` currently only works when type of `other` is in (int, str, float)"
+                )
+
         return self + other
 
     add.__doc__ = _flex_doc_SERIES.format(
@@ -507,7 +518,17 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         series_examples=_add_example_SERIES,
     )
 
-    def radd(self, other: Any) -> "Series":
+    def radd(self, other: Any, fill_value: Union[int, str, float] = None) -> "Series":
+        if fill_value is not None:
+            if isinstance(other, (int, str, float)):
+                scol = self.spark.column
+                scol = F.when(scol.isNull() | F.isnan(scol), fill_value).otherwise(scol)
+                self = self._with_new_scol(scol)
+            else:
+                raise NotImplementedError(
+                    "`fill_value` currently only works when type of `other` is in (int, str, float)"
+                )
+
         return other + self
 
     radd.__doc__ = _flex_doc_SERIES.format(
@@ -1060,7 +1081,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
 
         .. note:: make sure the size of the dictionary is not huge because it could
             downgrade the performance or throw OutOfMemoryError due to a huge
-            expression within Spark. Consider the input as a functions as an
+            expression within Spark. Consider the input as a function as an
             alternative instead in this case.
 
         Parameters
@@ -1078,12 +1099,12 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         See Also
         --------
         Series.apply : For applying more complex functions on a Series.
-        DataFrame.applymap : Apply a function elementwise on a whole DataFrame.
+        DataFrame.applymap : Apply a function element-wise on a whole DataFrame.
 
         Notes
         -----
         When ``arg`` is a dictionary, values in Series that are not in the
-        dictionary (as keys) are converted to ``None``. However, if the
+        dictionary (as keys) is converted to ``None``. However, if the
         dictionary is a ``dict`` subclass that defines ``__missing__`` (i.e.
         provides a method for default values), then this default is used
         rather than ``None``.
@@ -1365,7 +1386,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         #   1. the distinct count without nulls and count without nulls for non-null values
         #   2. count null values and see if null is a distinct value.
         #
-        # This workaround is in order to calculate the distinct count including nulls in
+        # This workaround is to calculate the distinct count including nulls in
         # single pass. Note that COUNT(DISTINCT expr) in Spark is designed to ignore nulls.
         return self._internal.spark_frame.select(
             (F.count(scol) == F.countDistinct(scol))
@@ -1693,7 +1714,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
 
     def _to_pandas(self) -> pd.Series:
         """
-        Same as `to_pandas()`, without issueing the advice log for internal usage.
+        Same as `to_pandas()`, without issuing the advice log for internal usage.
         """
         return self._to_internal_pandas().copy()
 
@@ -1830,7 +1851,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         5     hippo
         Name: animal, dtype: object
 
-        With the 'keep' parameter, the selection behaviour of duplicated values
+        With the 'keep' parameter, the selection behavior of duplicated values
         can be changed. The value 'first' keeps the first occurrence for each
         set of duplicated entries. The default value of keep is 'first'.
 
@@ -2050,9 +2071,9 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         """Fill NA/NaN values.
 
         .. note:: the current implementation of 'method' parameter in fillna uses Spark's Window
-            without specifying partition specification. This leads to move all data into
-            single partition in single machine and could cause serious
-            performance degradation. Avoid this method against very large dataset.
+            without specifying partition specification. This leads to moveing all data into
+            a single partition in a single machine and could cause serious
+            performance degradation. Avoid this method with very large datasets.
 
         Parameters
         ----------
@@ -2368,7 +2389,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         """
         Trim values at input threshold(s).
 
-        Assigns values outside boundary to boundary values.
+        Assigns values outside boundary-to-boundary values.
 
         Parameters
         ----------
@@ -2967,7 +2988,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         inplace : bool, default False
             if True, perform operation in-place
         kind : str, default None
-            pandas-on-Spark does not allow specifying the sorting algorithm at the moment,
+            pandas-on-Spark does not allow specifying the sorting algorithm now,
             default None
         na_position : {‘first’, ‘last’}, default ‘last’
             first puts NaNs at the beginning, last puts NaNs at the end. Not implemented for
@@ -3262,9 +3283,9 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         the Series and its shifted self.
 
         .. note:: the current implementation of rank uses Spark's Window without
-            specifying partition specification. This leads to move all data into
-            single partition in single machine and could cause serious
-            performance degradation. Avoid this method against very large dataset.
+            specifying partition specification. This leads to moveing all data into
+            a single partition in a single machine and could cause serious
+            performance degradation. Avoid this method with very large datasets.
 
         .. versionadded:: 3.4.0
 
@@ -3564,6 +3585,8 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         """
         Concatenate two or more Series.
 
+        .. deprecated:: 3.4.0
+
         Parameters
         ----------
         to_append : Series or list/tuple of Series
@@ -3611,6 +3634,12 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         5    6
         dtype: int64
         """
+        warnings.warn(
+            "The Series.append method is deprecated "
+            "and will be removed in a future version. "
+            "Use pyspark.pandas.concat instead.",
+            FutureWarning,
+        )
         return first_series(
             self.to_frame().append(to_append.to_frame(), ignore_index, verify_integrity)
         ).rename(self.name)
@@ -3824,7 +3853,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
 
     def transpose(self, *args: Any, **kwargs: Any) -> "Series":
         """
-        Return the transpose, which is by definition self.
+        Return the transpose, which is self.
 
         Examples
         --------
@@ -3871,7 +3900,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         func : function or list
             A function or a list of functions to use for transforming the data.
         axis : int, default 0 or 'index'
-            Can only be set to 0 at the moment.
+            Can only be set to 0 now.
         *args
             Positional arguments to pass to `func`.
         **kwargs
@@ -3946,7 +3975,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         ----------
         decimals : int
             Number of decimal places to round to (default: 0).
-            If decimals is negative, it specifies the number of
+            If decimals are negative, it specifies the number of
             positions to the left of the decimal point.
 
         Returns
@@ -4075,9 +4104,9 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         assigned a rank that is the average of the ranks of those values.
 
         .. note:: the current implementation of rank uses Spark's Window without
-            specifying partition specification. This leads to move all data into
-            single partition in single machine and could cause serious
-            performance degradation. Avoid this method against very large dataset.
+            specifying partition specification. This leads to moveing all data into
+            a single partition in a single machine and could cause serious
+            performance degradation. Avoid this method with very large datasets.
 
         Parameters
         ----------
@@ -4113,7 +4142,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         3    4.0
         Name: A, dtype: float64
 
-        If method is set to 'min', it use lowest rank in group.
+        If method is set to 'min', it uses lowest rank in group.
 
         >>> s.rank(method='min')
         0    1.0
@@ -4122,7 +4151,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         3    4.0
         Name: A, dtype: float64
 
-        If method is set to 'max', it use highest rank in group.
+        If method is set to 'max', it uses highest rank in group.
 
         >>> s.rank(method='max')
         0    1.0
@@ -4252,9 +4281,9 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         DataFrame (default is the element in the same column of the previous row).
 
         .. note:: the current implementation of diff uses Spark's Window without
-            specifying partition specification. This leads to move all data into
-            single partition in single machine and could cause serious
-            performance degradation. Avoid this method against very large dataset.
+            specifying partition specification. This leads to moveing all data into
+            a single partition in a single machine and could cause serious
+            performance degradation. Avoid this method with very large datasets.
 
         Parameters
         ----------
@@ -4417,7 +4446,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         if len(results) == 0:
             raise ValueError("attempt to get idxmin of an empty sequence")
         if results[0][0] is None:
-            # This will only happens when skipna is False because we will
+            # This will only happen when skipna is False because we will
             # place nulls first.
             return np.nan
         values = list(results[0][1:])
@@ -4525,7 +4554,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         if len(results) == 0:
             raise ValueError("attempt to get idxmin of an empty sequence")
         if results[0][0] is None:
-            # This will only happens when skipna is False because we will
+            # This will only happen when skipna is False because we will
             # place nulls first.
             return np.nan
         values = list(results[0][1:])
@@ -4615,7 +4644,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
                 length      0.3
         dtype: float64
 
-        Also support for MultiIndex with several indexs.
+        Also support for MultiIndex with several indexes.
 
         >>> midx = pd.MultiIndex([['a', 'b', 'c'],
         ...                       ['lama', 'cow', 'falcon'],
@@ -4865,7 +4894,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         Values of the Series are replaced with other values dynamically.
 
         .. note:: For partial pattern matching, the replacement is against the whole string,
-            which is different from pandas'. That's by the nature of underlying Spark API.
+            which is different from pandas. That's by the nature of underlying Spark API.
 
         Parameters
         ----------
@@ -5484,9 +5513,9 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         Percentage change between the current and a prior element.
 
         .. note:: the current implementation of this API uses Spark's Window without
-            specifying partition specification. This leads to move all data into
-            single partition in single machine and could cause serious
-            performance degradation. Avoid this method against very large dataset.
+            specifying partition specification. This leads to moveing all data into
+            a single partition in a single machine and could cause serious
+            performance degradation. Avoid this method with very large datasets.
 
         Parameters
         ----------
@@ -5548,7 +5577,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
 
         See Also
         --------
-        Series.combine : Perform elementwise operation on two Series
+        Series.combine : Perform element-wise operation on two Series
             using a given function.
 
         Notes
@@ -5599,7 +5628,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         It can also be called using `self @ other` in Python >= 3.5.
 
         .. note:: This API is slightly different from pandas when indexes from both Series
-            are not aligned and config 'compute.eager_check' is False. pandas raises an exception;
+            are not aligned and config 'compute.eager_check' is False. pandas raise an exception;
             however, pandas-on-Spark just proceeds and performs by ignoring mismatches with NaN
             permissively.
 
@@ -5625,12 +5654,12 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         -------
         scalar, Series
             Return the dot product of the Series and other if other is a
-            Series, the Series of the dot product of Series and each rows of
+            Series, the Series of the dot product of Series and each row of
             other if other is a DataFrame.
 
         Notes
         -----
-        The Series and other has to share the same index if other is a Series
+        The Series and other must share the same index if other are a Series
         or a DataFrame.
 
         Examples
@@ -5867,8 +5896,8 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
                     (index_scol <= F.lit(index).cast(index_type)) & spark_column.isNotNull()
                     if pd.notna(index)
                     # If index is nan and the value of the col is not null
-                    # then return monotonically_increasing_id .This will let max by
-                    # to return last index value , which is the behaviour of pandas
+                    # then return monotonically_increasing_id. This will let max by
+                    # to return last index value, which is the behaviour of pandas
                     else spark_column.isNotNull(),
                     monotonically_increasing_id_column,
                 ),
@@ -5903,6 +5932,8 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         """
         Return the mean absolute deviation of values.
 
+        .. deprecated:: 3.4.0
+
         Examples
         --------
         >>> s = ps.Series([1, 2, 3, 4])
@@ -5916,7 +5947,11 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         >>> s.mad()
         1.0
         """
-
+        warnings.warn(
+            "The 'mad' method is deprecated and will be removed in a future version. "
+            "To compute the same result, you may do `(series - series.mean()).abs().mean()`.",
+            FutureWarning,
+        )
         sdf = self._internal.spark_frame
         spark_column = self.spark.column
         avg = unpack_scalar(sdf.select(F.avg(spark_column)))
@@ -6470,7 +6505,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         Compare to another Series and show the differences.
 
         .. note:: This API is slightly different from pandas when indexes from both Series
-            are not identical and config 'compute.eager_check' is False. pandas raises an exception;
+            are not identical and config 'compute.eager_check' is False. pandas raise an exception;
             however, pandas-on-Spark just proceeds and performs by ignoring mismatches.
 
             >>> psser1 = ps.Series([1, 2, 3, 4, 5], index=pd.Index([1, 2, 3, 4, 5]))
@@ -6532,7 +6567,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         3     d     b
         4  None  None
 
-        Keep all original rows and also all original values
+        Keep all original rows and all original values
 
         >>> s1.compare(s2, keep_shape=True, keep_equal=True).sort_index()
           self other
@@ -6779,6 +6814,8 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
 
         return (left_ser.copy(), right.copy()) if copy else (left_ser, right)
 
+    # TODO(SPARK-42620): Add `inclusive` parameter and replace `include_start` & `include_end`.
+    # See https://github.com/pandas-dev/pandas/issues/43248
     def between_time(
         self,
         start_time: Union[datetime.time, str],
@@ -6801,8 +6838,14 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
             End time as a time filter limit.
         include_start : bool, default True
             Whether the start time needs to be included in the result.
+
+            .. deprecated:: 3.4.0
+
         include_end : bool, default True
             Whether the end time needs to be included in the result.
+
+            .. deprecated:: 3.4.0
+
         axis : {0 or 'index', 1 or 'columns'}, default 0
             Determine range time on index or columns value.
 
@@ -7180,7 +7223,7 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         bucket ``2000-01-01 00:03:00`` contains the value 3, but the summed
         value in the resampled bucket with the label ``2000-01-01 00:03:00``
         does not include 3 (if it did, the summed value would be 6, not 3).
-        To include this value close the right side of the bin interval as
+        To include this value, close the right side of the bin interval as
         illustrated in the example below this one.
 
         >>> series.resample('3T', label='right').sum().sort_index()
