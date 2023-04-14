@@ -65,26 +65,17 @@ case class ProjectExec(projectList: Seq[NamedExpression], child: SparkPlan)
     references.filter(a => usedMoreThanOnce.contains(a.exprId))
   }
 
+  override def reusableExpressions(): (Seq[Expression], Seq[Attribute]) =
+    (projectList, child.output)
+
+
   override def doConsume(ctx: CodegenContext, input: Seq[ExprCode], row: ExprCode): String = {
     val exprs = bindReferences[Expression](projectList, child.output)
-    val (subExprsCode, resultVars, localValInputs) = if (conf.subexpressionEliminationEnabled) {
-      // subexpression elimination
-      val subExprs = ctx.subexpressionEliminationForWholeStageCodegen(exprs)
-      val genVars = ctx.withSubExprEliminationExprs(subExprs.states) {
-        exprs.map(_.genCode(ctx))
-      }
-      (ctx.evaluateSubExprEliminationState(subExprs.states.values), genVars,
-        subExprs.exprCodesNeedEvaluate)
-    } else {
-      ("", exprs.map(_.genCode(ctx)), Seq.empty)
-    }
+    val resultVars = exprs.map(_.genCode(ctx))
 
     // Evaluation of non-deterministic expressions can't be deferred.
     val nonDeterministicAttrs = projectList.filterNot(_.deterministic).map(_.toAttribute)
     s"""
-       |// common sub-expressions
-       |${evaluateVariables(localValInputs)}
-       |$subExprsCode
        |${evaluateRequiredVariables(output, resultVars, AttributeSet(nonDeterministicAttrs))}
        |${consume(ctx, resultVars)}
      """.stripMargin
@@ -241,6 +232,9 @@ case class FilterExec(condition: Expression, child: SparkPlan)
   protected override def doProduce(ctx: CodegenContext): String = {
     child.asInstanceOf[CodegenSupport].produce(ctx, this)
   }
+
+  override def reusableExpressions(): (Seq[Expression], Seq[Attribute]) =
+    (otherPreds, child.output)
 
   override def doConsume(ctx: CodegenContext, input: Seq[ExprCode], row: ExprCode): String = {
     val numOutput = metricTerm(ctx, "numOutputRows")

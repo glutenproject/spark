@@ -551,6 +551,7 @@ case class HashAggregateExec(
     def outputFromRowBasedMap: String = {
       s"""
          |while ($limitNotReachedCondition $iterTermForFastHashMap.next()) {
+         |  ${initBlock}
          |  UnsafeRow $keyTerm = (UnsafeRow) $iterTermForFastHashMap.getKey();
          |  UnsafeRow $bufferTerm = (UnsafeRow) $iterTermForFastHashMap.getValue();
          |  $outputFunc($keyTerm, $bufferTerm);
@@ -577,6 +578,7 @@ case class HashAggregateExec(
       s"""
          |while ($limitNotReachedCondition $iterTermForFastHashMap.hasNext()) {
          |  InternalRow $row = (InternalRow) $iterTermForFastHashMap.next();
+         |  ${initBlock}
          |  ${generateKeyRow.code}
          |  ${generateBufferRow.code}
          |  $outputFunc(${generateKeyRow.value}, ${generateBufferRow.value});
@@ -591,6 +593,7 @@ case class HashAggregateExec(
     def outputFromRegularHashMap: String = {
       s"""
          |while ($limitNotReachedCondition $iterTerm.next()) {
+         |  ${initBlock}
          |  UnsafeRow $keyTerm = (UnsafeRow) $iterTerm.getKey();
          |  UnsafeRow $bufferTerm = (UnsafeRow) $iterTerm.getValue();
          |  $outputFunc($keyTerm, $bufferTerm);
@@ -625,7 +628,7 @@ case class HashAggregateExec(
     // create grouping key
     val unsafeRowKeyCode = GenerateUnsafeProjection.createCode(
       ctx, bindReferences[Expression](groupingExpressions, child.output))
-    val fastRowKeys = ctx.generateExpressions(
+    val (fastRowKeys, initBlock) = ctx.generateExpressions(
       bindReferences[Expression](groupingExpressions, child.output))
     val unsafeRowKeys = unsafeRowKeyCode.value
     val unsafeRowKeyHash = ctx.freshName("unsafeRowKeyHash")
@@ -688,6 +691,7 @@ case class HashAggregateExec(
         // If fast hash map is on, we first generate code to probe and update the fast hash map.
         // If the probe is successful the corresponding fast row buffer will hold the mutable row.
         s"""
+           |$initBlock
            |${fastRowKeys.map(_.code).mkString("\n")}
            |if (${fastRowKeys.map("!" + _.isNull).mkString(" && ")}) {
            |  $fastRowBuffer = $fastHashMapTerm.findOrInsert(
@@ -727,12 +731,9 @@ case class HashAggregateExec(
       val boundUpdateExprs = updateExprs.map { updateExprsForOneFunc =>
         bindReferences(updateExprsForOneFunc, inputAttrs)
       }
-      val subExprs = ctx.subexpressionEliminationForWholeStageCodegen(boundUpdateExprs.flatten)
-      val effectiveCodes = ctx.evaluateSubExprEliminationState(subExprs.states.values)
+      val initBlock = ctx.subexpressionElimination(boundUpdateExprs.flatten)
       val unsafeRowBufferEvals = boundUpdateExprs.map { boundUpdateExprsForOneFunc =>
-        ctx.withSubExprEliminationExprs(subExprs.states) {
-          boundUpdateExprsForOneFunc.map(_.genCode(ctx))
-        }
+        boundUpdateExprsForOneFunc.map(_.genCode(ctx))
       }
 
       val aggCodeBlocks = updateExprs.indices.map { i =>
@@ -757,10 +758,10 @@ case class HashAggregateExec(
       }
 
       val codeToEvalAggFuncs = generateEvalCodeForAggFuncs(
-        ctx, input, inputAttrs, boundUpdateExprs, aggNames, aggCodeBlocks, subExprs)
+        ctx, input, inputAttrs, boundUpdateExprs, aggNames, aggCodeBlocks)
       s"""
          |// common sub-expressions
-         |$effectiveCodes
+         |$initBlock
          |// evaluate aggregate functions and update aggregation buffers
          |$codeToEvalAggFuncs
        """.stripMargin
@@ -773,12 +774,9 @@ case class HashAggregateExec(
           val boundUpdateExprs = updateExprs.map { updateExprsForOneFunc =>
             bindReferences(updateExprsForOneFunc, inputAttrs)
           }
-          val subExprs = ctx.subexpressionEliminationForWholeStageCodegen(boundUpdateExprs.flatten)
-          val effectiveCodes = ctx.evaluateSubExprEliminationState(subExprs.states.values)
+          val initBlock = ctx.subexpressionElimination(boundUpdateExprs.flatten)
           val fastRowEvals = boundUpdateExprs.map { boundUpdateExprsForOneFunc =>
-            ctx.withSubExprEliminationExprs(subExprs.states) {
-              boundUpdateExprsForOneFunc.map(_.genCode(ctx))
-            }
+            boundUpdateExprsForOneFunc.map(_.genCode(ctx))
           }
 
           val aggCodeBlocks = fastRowEvals.zipWithIndex.map { case (fastRowEvalsForOneFunc, i) =>
@@ -802,7 +800,7 @@ case class HashAggregateExec(
           }
 
           val codeToEvalAggFuncs = generateEvalCodeForAggFuncs(
-            ctx, input, inputAttrs, boundUpdateExprs, aggNames, aggCodeBlocks, subExprs)
+            ctx, input, inputAttrs, boundUpdateExprs, aggNames, aggCodeBlocks)
 
           // If vectorized fast hash map is on, we first generate code to update row
           // in vectorized fast hash map, if the previous loop up hit vectorized fast hash map.
@@ -810,7 +808,7 @@ case class HashAggregateExec(
           s"""
              |if ($fastRowBuffer != null) {
              |  // common sub-expressions
-             |  $effectiveCodes
+             |  $initBlock
              |  // evaluate aggregate functions and update aggregation buffers
              |  $codeToEvalAggFuncs
              |} else {

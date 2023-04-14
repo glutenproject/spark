@@ -621,6 +621,7 @@ trait HashJoin extends JoinCodegenSupport {
          |  if ($matches != null) {
          |    // Evaluate the condition.
          |    while (!$found && $matches.hasNext()) {
+         |      ${initBlock}
          |      UnsafeRow $matched = (UnsafeRow) $matches.next();
          |      $checkCondition {
          |        $found = true;
