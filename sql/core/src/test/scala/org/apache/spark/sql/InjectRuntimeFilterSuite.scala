@@ -422,6 +422,39 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
     }
   }
 
+  test("Runtime bloom filter join: three joins") {
+    withSQLConf(SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "3000",
+      SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "2000") {
+      assertRewroteWithBloomFilter("select * from " +
+        "(select * from bf1 join bf2 on bf1.c1 = bf2.c2 where bf2.a2 = 5) as a join " +
+        "(select * from bf1 join bf3 on bf1.c1 = bf3.c3 where bf3.a3 > 10) as b on a.c2 = b.c3", 4)
+      assertRewroteWithBloomFilter("select * from " +
+        "(select * from bf1 left outer join bf2 on bf1.c1 = bf2.c2 where bf2.a2 = 5) as a join " +
+        "(select * from bf1 left outer join bf3 on bf1.c1 = bf3.c3 where bf3.a3 > 10) as b" +
+        " on a.c2 = b.c3", 4)
+      assertRewroteWithBloomFilter("select * from " +
+        "(select * from bf1 right outer join bf2 on bf1.c1 = bf2.c2 where bf2.a2 = 5) as a join " +
+        "(select * from bf1 right outer join bf3 on bf1.c1 = bf3.c3 where bf3.a3 > 10) as b" +
+        " on a.c2 = b.c3", 4)
+      assertRewroteWithBloomFilter("select * from " +
+        "(select * from bf1 join bf2 on bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join " +
+        "(select * from bf1 join bf3 on bf1.c1 = bf3.c3 where bf1.b1 > 10) as b" +
+        " on a.c1 = b.c1", 4)
+    }
+
+    withSQLConf(SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "3000",
+      SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "1200") {
+      assertRewroteWithBloomFilter("select * from " +
+        "(select * from bf1 left semi join bf2 on (bf1.c1 = bf2.c2 and bf2.a2 = 5)) as a join " +
+        "(select * from bf1 left semi join bf3 on (bf1.c1 = bf3.c3 and bf3.a3 > 10)) as b " +
+        "on a.c1 = b.c1", 2)
+      assertRewroteWithBloomFilter("select * from " +
+        "(select * from bf1 left anti join bf2 on (bf1.c1 = bf2.c2 and bf2.a2 = 5)) as a join " +
+        "(select * from bf1 left anti join bf3 on (bf1.c1 = bf3.c3 and bf3.a3 > 10)) as b " +
+        "on a.c1 = b.c1", 0)
+    }
+  }
+
   test("Runtime bloom filter join: two filters single join") {
     withSQLConf(SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "3000",
       SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "2000") {
