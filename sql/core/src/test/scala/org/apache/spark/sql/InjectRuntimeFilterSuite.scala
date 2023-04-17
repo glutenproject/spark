@@ -19,6 +19,7 @@ package org.apache.spark.sql
 
 import org.apache.spark.sql.catalyst.expressions.{Alias, BloomFilterMightContain, Literal}
 import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, BloomFilterAggregate}
+import org.apache.spark.sql.catalyst.optimizer.ColumnPruning
 import org.apache.spark.sql.catalyst.plans.LeftSemi
 import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, Filter, Join, LogicalPlan}
 import org.apache.spark.sql.execution.{ReusedSubqueryExec, SubqueryExec}
@@ -235,7 +236,7 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
   }
 
   def checkWithAndWithoutFeatureEnabled(query: String, testSemiJoin: Boolean,
-      shouldReplace: Boolean): Unit = {
+      shouldReplace: Boolean, runtimeFilterNum: Int = 1): Unit = {
     var planDisabled: LogicalPlan = null
     var planEnabled: LogicalPlan = null
     var expectedAnswer: Array[Row] = null
@@ -257,6 +258,11 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
         val normalizedDisabled = normalizePlan(normalizeExprIds(planDisabled))
         ensureLeftSemiJoinExists(planEnabled)
         assert(normalizedEnabled != normalizedDisabled)
+        val agg = planEnabled.collect {
+          case Join(_, agg: Aggregate, LeftSemi, _, _) => agg
+        }
+        assert(agg.size == runtimeFilterNum)
+        assert(agg.head.fastEquals(ColumnPruning(agg.head)))
       } else {
         comparePlans(planDisabled, planEnabled)
       }
@@ -265,9 +271,10 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
         SQLConf.RUNTIME_BLOOM_FILTER_ENABLED.key -> "true") {
         planEnabled = sql(query).queryExecution.optimizedPlan
         checkAnswer(sql(query), expectedAnswer)
+        assert(getNumBloomFilters(planDisabled) == 0)
         if (shouldReplace) {
           assert(!columnPruningTakesEffect(planEnabled))
-          assert(getNumBloomFilters(planEnabled) > getNumBloomFilters(planDisabled))
+          assert(getNumBloomFilters(planEnabled) == runtimeFilterNum)
         } else {
           assert(getNumBloomFilters(planEnabled) == getNumBloomFilters(planDisabled))
         }
@@ -314,16 +321,18 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
     }.nonEmpty
   }
 
-  def assertRewroteSemiJoin(query: String): Unit = {
-    checkWithAndWithoutFeatureEnabled(query, testSemiJoin = true, shouldReplace = true)
+  def assertRewroteSemiJoin(query: String, runtimeFilterNum: Int = 1): Unit = {
+    checkWithAndWithoutFeatureEnabled(
+      query, testSemiJoin = true, shouldReplace = true, runtimeFilterNum)
   }
 
   def assertDidNotRewriteSemiJoin(query: String): Unit = {
     checkWithAndWithoutFeatureEnabled(query, testSemiJoin = true, shouldReplace = false)
   }
 
-  def assertRewroteWithBloomFilter(query: String): Unit = {
-    checkWithAndWithoutFeatureEnabled(query, testSemiJoin = false, shouldReplace = true)
+  def assertRewroteWithBloomFilter(query: String, runtimeFilterNum: Int = 1): Unit = {
+    checkWithAndWithoutFeatureEnabled(
+      query, testSemiJoin = false, shouldReplace = true, runtimeFilterNum)
   }
 
   def assertDidNotRewriteWithBloomFilter(query: String): Unit = {
@@ -344,7 +353,7 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
     withSQLConf(SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "3000",
       SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "2000") {
       assertRewroteSemiJoin("select * from bf1 join bf2 join bf3 on bf1.c1 = bf2.c2 " +
-        "and bf3.c3 = bf2.c2 where bf2.a2 = 5")
+        "and bf3.c3 = bf2.c2 where bf2.a2 = 5", 2)
     }
   }
 
@@ -376,6 +385,40 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
       assertRewroteWithBloomFilter("select * from bf1 join bf2 on bf1.c1 = bf2.c2 " +
         "where bf2.a2 = 62")
       assertDidNotRewriteWithBloomFilter("select * from bf1 join bf2 on bf1.c1 = bf2.c2")
+    }
+  }
+
+  test("Runtime bloom filter join: two joins") {
+    withSQLConf(SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "3000",
+      SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "2000") {
+      assertRewroteWithBloomFilter("select * from bf1 join bf2 join bf3 on bf1.c1 = bf2.c2 " +
+        "and bf3.c3 = bf2.c2 where bf2.a2 = 5", 2)
+      assertRewroteWithBloomFilter("select * from (select * from bf1 left semi join bf2 on " +
+        "bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join bf3 on bf3.c3 = a.c1")
+      assertRewroteWithBloomFilter("select * from (select * from bf1 left anti join bf2 on " +
+        "bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join bf3 on bf3.c3 = a.c1")
+      assertRewroteWithBloomFilter("select * from bf1 left outer join bf2 join bf3 on " +
+        "bf1.c1 = bf2.c2 and bf3.c3 = bf2.c2 where bf2.a2 = 5", 2)
+      assertRewroteWithBloomFilter("select * from bf1 right outer join bf2 join bf3 on " +
+        "bf1.c1 = bf2.c2 and bf3.c3 = bf2.c2 where bf2.a2 = 5", 2)
+      assertRewroteWithBloomFilter("select * from bf1 join bf2 join bf3 on bf1.c1 = bf2.c2 " +
+        "and bf3.c3 = bf1.c1 where bf1.a1 = 5", 2)
+      assertRewroteWithBloomFilter("select * from bf1 left outer join bf2 join bf3 on " +
+        "bf1.c1 = bf2.c2 and bf3.c3 = bf1.c1 where bf1.a1 = 5", 2)
+      assertRewroteWithBloomFilter("select * from bf1 right outer join bf2 join bf3 on " +
+        "bf1.c1 = bf2.c2 and bf3.c3 = bf1.c1 where bf1.a1 = 5", 2)
+    }
+
+    withSQLConf(SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "3000",
+      SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "1200") {
+      assertRewroteWithBloomFilter("select * from (select * from bf1 left semi join bf2 on " +
+        "bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join bf3 on bf3.c3 = a.c1", 2)
+      assertRewroteWithBloomFilter("select * from (select * from bf1 left anti join bf2 on " +
+        "bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join bf3 on bf3.c3 = a.c1")
+      assertRewroteWithBloomFilter("select * from (select * from bf1 left semi join bf2 on " +
+        "(bf1.c1 = bf2.c2 and bf2.a2 = 5)) as a join bf3 on bf3.c3 = a.c1")
+      assertRewroteWithBloomFilter("select * from (select * from bf1 left anti join bf2 on " +
+        "(bf1.c1 = bf2.c2 and bf2.a2 = 5)) as a join bf3 on bf3.c3 = a.c1", 0)
     }
   }
 
@@ -513,7 +556,7 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
         SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "5000") {
         assertRewroteWithBloomFilter("select * from " +
           "(select * from bf5filtered union all select * from bf2) t " +
-          "join bf3 on t.c5 = bf3.c3 where bf3.a3 = 5")
+          "join bf3 on t.c5 = bf3.c3 where bf3.a3 = 5", 2)
       }
       withSQLConf(
         SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "15000") {
@@ -547,6 +590,32 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
           |FROM   bf1 LEFT SEMI
           |JOIN   (SELECT * FROM bf2 WHERE bf2.a2 = 62) tmp
           |ON     bf1.c1 = tmp.c2
+        """.stripMargin)
+    }
+  }
+
+  test("Runtime Filter supports pruning side has Aggregate") {
+    withSQLConf(SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "3000") {
+      assertRewroteWithBloomFilter(
+        """
+          |SELECT *
+          |FROM   (SELECT c1 AS aliased_c1, d1 FROM bf1 GROUP BY c1, d1) bf1
+          |       JOIN bf2 ON bf1.aliased_c1 = bf2.c2
+          |WHERE  bf2.a2 = 62
+        """.stripMargin)
+    }
+  }
+
+  test("Runtime Filter supports pruning side has Window") {
+    withSQLConf(SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "3000") {
+      assertRewroteWithBloomFilter(
+        """
+          |SELECT *
+          |FROM   (SELECT *,
+          |               Row_number() OVER (PARTITION BY c1 ORDER BY f1) rn
+          |        FROM   bf1) bf1
+          |       JOIN bf2 ON bf1.c1 = bf2.c2
+          |WHERE  bf2.a2 = 62
         """.stripMargin)
     }
   }
