@@ -23,12 +23,12 @@ import org.apache.spark.sql.catalyst.analysis.{DecimalPrecision, ResolveTimeZone
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
-import org.apache.spark.sql.catalyst.planning.ExtractEquiJoinKeys
 import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.{AGGREGATE, JOIN}
 import org.apache.spark.sql.types.{DecimalType, LongType, NumericType}
+import org.apache.spark.sql.types.DecimalType.LongDecimal
 
 /**
  * Push down the partial aggregation through join. It supports the following cases:
@@ -61,27 +61,45 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
 
   def pushPartialAggHasBenefit(
       groupingExps: Seq[Expression],
-      plan: LogicalPlan): Boolean = {
-    val originRowCount = plan.stats.rowCount
-    val aggregatedRowCount = Aggregate(groupingExps, Nil, plan).stats.rowCount
-    val ratio = if (aggregatedRowCount.nonEmpty && originRowCount.nonEmpty) {
-      aggregatedRowCount.get.toDouble / originRowCount.get.toDouble
+      plan: LogicalPlan,
+      isBroadcastJoin: Boolean): Boolean = {
+    if (plan.stats.rowCount.exists(_ <= conf.adaptivePartialAggregationThreshold)) {
+      false
     } else {
-      1.0
-    }
-    ratio <= conf.partialAggregationOptimizationBenefitRatio
-  }
+      val canReduceOutput =
+        plan.stats.rowCount.forall(r => Aggregate(groupingExps, Nil, plan).stats.rowCount
+          .forall(_.toDouble / r.toDouble <= conf.partialAggregationOptimizationBenefitRatio))
 
-  /**
-   * Supported join:
-   * 1. Join will expansion a lot.
-   * 2. It is not broadcast hash join
-   */
-  private def supportedJoin(join: Join): Boolean = {
-    !(canPlanAsBroadcastHashJoin(join, conf) &&
-      join.stats.rowCount.exists { joinCnt =>
-        join.children.map(_.stats.rowCount).max.exists(maxCnt => joinCnt <= maxCnt * 2)
-      })
+      if (isBroadcastJoin) {
+        canReduceOutput && plan.stats.sizeInBytes > conf.autoBroadcastJoinThreshold &&
+          plan.collectUntil(_.isInstanceOf[Join]).forall(_.isInstanceOf[Project]) &&
+          plan.collectFirst { case j: Join => j }
+            .exists { j =>
+              !canPlanAsBroadcastHashJoin(j, conf) &&
+                j.children.exists { c =>
+                  val curGroupExps = groupingExps.filter(_.references.subsetOf(c.outputSet))
+                  val joinConditions = j.condition.map(splitConjunctivePredicates).getOrElse(Nil)
+                  val binaryComparisons = joinConditions.collect {
+                    case b @ BinaryComparison(_: Attribute, _: Attribute) => b
+                  }
+                  if (binaryComparisons.size == joinConditions.size) {
+                    val joinKeys = binaryComparisons.flatMap(_.children)
+                      .filter(_.references.subsetOf(c.outputSet))
+                    val maybePushedGroupExps = curGroupExps ++ joinKeys
+                    if (maybePushedGroupExps.nonEmpty) {
+                      pushPartialAggHasBenefit(maybePushedGroupExps, c, false)
+                    } else {
+                      true
+                    }
+                  } else {
+                    true
+                  }
+                }
+            }
+      } else {
+        canReduceOutput
+      }
+    }
   }
 
   // Returns true if `expr`'s references is non empty and can be evaluated using
@@ -91,9 +109,9 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
 
   // Returns true if `expr`'s references is empty or it can be evaluated using one side.
   private def canEvaluateOnOneSide(
-      expr: Expression,
-      leftNamedExpressions: Seq[NamedExpression],
-      rightNamedExpressions: Seq[NamedExpression]): Boolean = {
+                                    expr: Expression,
+                                    leftNamedExpressions: Seq[NamedExpression],
+                                    rightNamedExpressions: Seq[NamedExpression]): Boolean = {
     expr.references.subsetOf(AttributeSet(leftNamedExpressions.map(_.toAttribute))) ||
       expr.references.subsetOf(AttributeSet(rightNamedExpressions.map(_.toAttribute)))
   }
@@ -152,22 +170,12 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
     expr.mapChildren(_.transformUp {
       case e @ Sum(_, useAnsiAdd, dt) if aliasMap.contains(e.canonicalized) =>
         val resultType = e.dataType
-        val child = if (hasBenefit) {
-          aliasMap(e.canonicalized).toAttribute.cast(resultType)
-        } else {
-          e.child
-        }
-        val newChild = otherSideCnt.map(c => Multiply(child.cast(resultType), c.cast(resultType)))
-          .getOrElse(child)
-        e.dataType match {
-          case decType: DecimalType =>
-            // Do not use DecimalPrecision because it may be change the precision and scale
-            Sum(CheckOverflow(newChild, decType, !useAnsiAdd),
-              useAnsiAdd,
-              Some(dt.getOrElse(e.dataType)))
-          case _ =>
-            Sum(newChild, useAnsiAdd, dt.orElse(Some(e.dataType)))
-        }
+        val countType = if (resultType.isInstanceOf[DecimalType]) LongDecimal else resultType
+        val child = if (hasBenefit) aliasMap(e.canonicalized).toAttribute else e.child
+        val newChild =
+          otherSideCnt.map(c => Multiply(child.cast(resultType), c.cast(countType), useAnsiAdd))
+            .getOrElse(child)
+        Sum(newChild, useAnsiAdd, Some(dt.getOrElse(resultType)))
       case e: Count if aliasMap.contains(e.canonicalized) =>
         val child = if (hasBenefit) {
           aliasMap(e.canonicalized).toAttribute
@@ -227,7 +235,7 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
                         !useAnsiAdd), count.cast(DecimalType.LongDecimal),
                       failOnError = false)).cast(avg.dataType)
                 case _ =>
-                  Divide(sum.cast(avg.dataType), count.cast(avg.dataType), failOnError = false)
+                  Divide(sum.cast(avg.dataType), count.cast(avg.dataType), useAnsiAdd)
               }
             case _ => ae
           }
@@ -240,9 +248,8 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
     }
   }
 
-  private def pullOutJoinKeys(
-      joinKeys: Seq[Expression]): (Seq[Attribute], ArrayBuffer[NamedExpression]) = {
-    val complexJoinKeys = new ArrayBuffer[NamedExpression]()
+  private def pullOutJoinKeys(joinKeys: Seq[Expression]): (Seq[Attribute], ArrayBuffer[Alias]) = {
+    val complexJoinKeys = new ArrayBuffer[Alias]()
     val newJoinKeys = joinKeys.map {
       case a: Attribute => a
       case o =>
@@ -265,12 +272,24 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
     PartialAggregate(partialGroupingExps, deduplicateNamedExpressions(partialAggExps), plan)
   }
 
+  private def constructPartialAgg(
+       joinKeys: Seq[Attribute],
+       groupExps: Seq[NamedExpression],
+       remainingExps: Seq[NamedExpression],
+       plan: LogicalPlan): PartialAggregate = {
+    val partialGroupingExps = ExpressionSet(joinKeys ++ groupExps).toSeq
+    val partialAggExps = joinKeys ++ groupExps ++ remainingExps
+    PartialAggregate(partialGroupingExps, deduplicateNamedExpressions(partialAggExps), plan)
+  }
+
   private def pushDistinctThroughJoin(join: Join): Join = {
     var left = join.left
     var right = join.right
 
-    val pushLeftHasBenefit = pushPartialAggHasBenefit(left.output, left)
-    val pushRightHasBenefit = pushPartialAggHasBenefit(right.output, right)
+    val pushLeftHasBenefit =
+      pushPartialAggHasBenefit(left.output, left, canPlanAsBroadcastHashJoin(join, conf))
+    val pushRightHasBenefit =
+      pushPartialAggHasBenefit(right.output, right, canPlanAsBroadcastHashJoin(join, conf))
 
     if (pushLeftHasBenefit || pushRightHasBenefit) {
       left =
@@ -283,19 +302,71 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
     }
   }
 
+  private def pushDownPartialAggregation(
+      groupExps: Seq[Attribute],
+      leftKeys: Seq[Attribute],
+      rightKeys: Seq[Attribute],
+      agg: PartialAggregate,
+      join: Join): LogicalPlan = {
+    val aggRefs = AttributeSet(agg.collectAggregateExprs.flatMap(_.references))
+    val canPushLeft = aggRefs.subsetOf(join.left.outputSet) && canPruneRight(join.joinType) &&
+      (!canPlanAsBroadcastHashJoin(join, conf) || join.left.exists {
+        case j: Join => !canPlanAsBroadcastHashJoin(j, conf)
+        case _ => false
+      })
+    val canPushRight = aggRefs.subsetOf(join.right.outputSet) && canPruneLeft(join.joinType) &&
+      (!canPlanAsBroadcastHashJoin(join, conf) || join.right.exists {
+        case j: Join => !canPlanAsBroadcastHashJoin(j, conf)
+        case _ => false
+      })
+    lazy val pushedLeft = constructPartialAgg(
+      leftKeys,
+      groupExps.filter(_.references.subsetOf(join.left.outputSet)),
+      agg.aggregateExpressions.filter(_.references.subsetOf(join.left.outputSet)),
+      join.left)
+    lazy val pushedRight = constructPartialAgg(
+      rightKeys,
+      groupExps.filter(_.references.subsetOf(join.right.outputSet)),
+      agg.aggregateExpressions.filter(_.references.subsetOf(join.right.outputSet)),
+      join.right)
+
+    val (leftGroupExps, rightGroupExps, _) =
+      split(agg.groupingExpressions.map(_.asInstanceOf[Attribute]),
+        join.left, join.right)
+
+    val isPushLeftSide = canPruneRight(join.joinType) &&
+      pushPartialAggHasBenefit(AttributeSet(leftKeys ++ leftGroupExps).toSeq,
+        join.left, canPlanAsBroadcastHashJoin(join, conf))
+    val isPushRightSide = canPruneLeft(join.joinType) &&
+      pushPartialAggHasBenefit(AttributeSet(rightKeys ++ rightGroupExps).toSeq,
+        join.right, canPlanAsBroadcastHashJoin(join, conf))
+
+    if (canPushLeft && isPushLeftSide) {
+      Project(agg.aggregateExpressions.map(_.toAttribute), join.copy(left = pushedLeft))
+    } else if (canPushRight && isPushRightSide) {
+      Project(agg.aggregateExpressions.map(_.toAttribute), join.copy(right = pushedRight))
+    } else {
+      agg
+    }
+  }
+
   // The entry of push down partial aggregate through join.
   // Will return the current aggregate if it can't push down.
   private def pushAggThroughJoin(
       agg: Aggregate,
       projectList: Seq[NamedExpression],
-      leftKeys: Seq[Expression],
-      rightKeys: Seq[Expression],
       join: Join): LogicalPlan = {
     val rewrittenAgg = rewriteAverage(agg)
     val aggregateExpressions = rewrittenAgg.collectAggregateExprs
 
+    val joinCondition = join.condition.map(splitConjunctivePredicates)
+    val joinKeys = joinCondition.getOrElse(Nil).flatMap(_.children).filterNot(_.foldable)
+
+    val (leftKeys, rightKeys, bothSideKeys) =
+      PushPredicateThroughJoin.split(joinKeys, join.left, join.right)
+
     val (leftProjectList, rightProjectList, remainingProjectList) =
-      split(join.condition.map(_.references.toSeq).getOrElse(Nil) ++ projectList,
+      split(projectList ++ join.condition.map(_.references.toSeq).getOrElse(Nil),
         join.left, join.right)
 
     // remainingProjectList must should be empty. We do not support this case:
@@ -305,7 +376,7 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
     // 1. groupingExpressions is not empty and aggregateExpressions are pushableAggExp or
     //    pushableCountExp
     // 2. groupingExpressions is empty and aggregateExpressions are pushableAggExp
-    if (remainingProjectList.isEmpty &&
+    if (remainingProjectList.isEmpty && bothSideKeys.isEmpty &&
       ((rewrittenAgg.groupingExpressions.nonEmpty &&
         aggregateExpressions.forall(e => (pushableAggExp(e) || pushableCountExp(e)) &&
           canEvaluateOnOneSide(e, leftProjectList, rightProjectList))) ||
@@ -320,15 +391,17 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
       // Splits groupingExpressions into three categories based on the attributes.
       // We will use it as aggregateExpressions in PartialAggregate
       val (leftGroupExps, rightGroupExps, _) =
-        split(rewrittenAgg.groupingExpressions.map(_.asInstanceOf[Attribute]),
-          pushedLeftProject, pushedRightProject)
+      split(rewrittenAgg.groupingExpressions.map(_.asInstanceOf[Attribute]),
+        pushedLeftProject, pushedRightProject)
 
-      val pushLeftHasBenefit = pushPartialAggHasBenefit(
-        AttributeSet(leftKeys ++ leftGroupExps).toSeq, pushedLeftProject)
-      val pushRightHasBenefit = pushPartialAggHasBenefit(
-        AttributeSet(rightKeys ++ rightGroupExps).toSeq, pushedRightProject)
+      val isPushLeftSide = canPruneRight(join.joinType) &&
+        pushPartialAggHasBenefit(AttributeSet(leftKeys ++ leftGroupExps).toSeq,
+          pushedLeftProject, canPlanAsBroadcastHashJoin(join, conf))
+      val isPushRightSide = canPruneLeft(join.joinType) &&
+        pushPartialAggHasBenefit(AttributeSet(rightKeys ++ rightGroupExps).toSeq,
+          pushedRightProject, canPlanAsBroadcastHashJoin(join, conf))
 
-      if (pushLeftHasBenefit || pushRightHasBenefit) {
+      if (isPushLeftSide || isPushRightSide) {
         val (leftAliasMap, rightAliasMap, _) =
           splitAggregateExpressions(aggregateExpressions, pushedLeftProject, pushedRightProject)
 
@@ -345,14 +418,21 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
           .copy(projectList = deduplicateNamedExpressions(leftProjectList ++ complexLeftJoinKeys))
         val pullOutedRight = pushedRightProject
           .copy(projectList = deduplicateNamedExpressions(rightProjectList ++ complexRightJoinKeys))
-        val newCond = newLeftJoinKeys.zip(newRightJoinKeys)
-          .map { case (l, r) => EqualTo(l, r) }
-          .reduceLeftOption(And)
+        val newAliasMap = (complexLeftJoinKeys ++ complexRightJoinKeys)
+          .map { a => a.child.canonicalized -> a.toAttribute }.toMap
+        val newCond = joinCondition.map(_.map { singleCondition =>
+          val conditionChildren = singleCondition.children.map(_.transformDown {
+            case a: Attribute => a
+            case e: Expression if e.foldable => e
+            case e: Expression => newAliasMap.getOrElse(e.canonicalized, e)
+          })
+          singleCondition.withNewChildren(conditionChildren)
+        }.reduceLeft(And))
 
         // Construct partial aggregate and rewrite current aggregate
         val cntExp = Count(Seq(Literal(1))).toAggregateExpression()
-        val leftCnt = if (pushLeftHasBenefit) Some(Alias(cntExp, "cnt")()) else None
-        val rightCnt = if (pushRightHasBenefit) Some(Alias(cntExp, "cnt")()) else None
+        val leftCnt = if (isPushLeftSide) Some(Alias(cntExp, "cnt")()) else None
+        val rightCnt = if (isPushRightSide) Some(Alias(cntExp, "cnt")()) else None
         val leftCntAttr = leftCnt.map(_.toAttribute)
         val rightCntAttr = rightCnt.map(_.toAttribute)
 
@@ -360,11 +440,14 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
           leftRemainingExps, leftAliasMap, _, pullOutedLeft)).getOrElse(pullOutedLeft)
         val newRight = rightCnt.map(constructPartialAgg(newRightJoinKeys, rightGroupExps,
           rightRemainingExps, rightAliasMap, _, pullOutedRight)).getOrElse(pullOutedRight)
-        val newJoin = join.copy(left = newLeft, right = newRight, condition = newCond)
+        val newJoin = join.copy(
+          left = newLeft,
+          right = newRight,
+          condition = newCond)
 
         val newAggregateExps = rewrittenAgg.aggregateExpressions
-          .map(replaceAliasName(_, leftAliasMap, pushLeftHasBenefit, rightCntAttr))
-          .map(replaceAliasName(_, rightAliasMap, pushRightHasBenefit, leftCntAttr))
+          .map(replaceAliasName(_, leftAliasMap, isPushLeftSide, rightCntAttr))
+          .map(replaceAliasName(_, rightAliasMap, isPushRightSide, leftCntAttr))
           .map { expr =>
             expr.mapChildren(_.transformUp {
               case e @ Count(Seq(IntegerLiteral(1))) =>
@@ -387,8 +470,9 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
             }).asInstanceOf[NamedExpression]
           }
 
-        val newAgg = if (ExpressionSet(leftKeys).subsetOf(ExpressionSet(leftGroupExps)) ||
-          ExpressionSet(rightKeys).subsetOf(ExpressionSet(rightGroupExps))) {
+        val newAgg = if (join.joinType == Inner &&
+          (ExpressionSet(leftKeys).subsetOf(ExpressionSet(leftGroupExps)) ||
+            ExpressionSet(rightKeys).subsetOf(ExpressionSet(rightGroupExps)))) {
           FinalAggregate(rewrittenAgg.groupingExpressions, newAggregateExps, newJoin)
         } else {
           rewrittenAgg.copy(aggregateExpressions = newAggregateExps, child = newJoin)
@@ -410,47 +494,36 @@ object PushPartialAggregationThroughJoin extends Rule[LogicalPlan]
     } else {
       plan.transformWithPruning(_.containsAllPatterns(AGGREGATE, JOIN), ruleId) {
         case agg @ Aggregate(_, _, j: Join)
-            if j.children.exists(_.isInstanceOf[AggregateBase]) =>
+          if j.children.exists(_.isInstanceOf[AggregateBase]) =>
           agg
         case agg @ Aggregate(_, _, Project(_, j: Join))
-            if j.children.exists(_.isInstanceOf[AggregateBase]) =>
-          agg
-
-        case agg @ PartialAggregate(_, _, j: Join)
-            if j.children.exists(_.isInstanceOf[AggregateBase]) =>
-          agg
-        case agg @ PartialAggregate(_, _, Project(_, j: Join))
-            if j.children.exists(_.isInstanceOf[AggregateBase]) =>
+          if j.children.exists(_.isInstanceOf[AggregateBase]) =>
           agg
 
         case agg @ Aggregate(_, aggExps,
-          j @ Join(_, _, Inner | LeftOuter | RightOuter | FullOuter | Cross, _, _))
-            if aggExps.forall(_.deterministic) && agg.collectAggregateExprs.forall(_.isDistinct) &&
-              supportedJoin(j) =>
+        j @ Join(_, _, Inner | LeftOuter | RightOuter | FullOuter | Cross, _, _))
+          if aggExps.forall(_.deterministic) && agg.collectAggregateExprs.forall(_.isDistinct) =>
           agg.copy(child = pushDistinctThroughJoin(j))
 
         case agg @ Aggregate(_, aggExps, p @ Project(_,
-          j @ Join(_, _, Inner | LeftOuter | RightOuter | FullOuter | Cross, _, _)))
-            if aggExps.forall(_.deterministic) && agg.collectAggregateExprs.forall(_.isDistinct) &&
-              supportedJoin(j) =>
+        j @ Join(_, _, Inner | LeftOuter | RightOuter | FullOuter | Cross, _, _)))
+          if aggExps.forall(_.deterministic) && agg.collectAggregateExprs.forall(_.isDistinct) =>
           agg.copy(child = p.copy(child = pushDistinctThroughJoin(j)))
 
         case agg @ Aggregate(groupExps, aggExps,
-          j @ ExtractEquiJoinKeys(Inner, leftKeys, rightKeys, None, _, _, _, _))
-            if groupExps.forall(_.isInstanceOf[Attribute]) && leftKeys.nonEmpty &&
-              aggExps.forall(e => e.deterministic && isSimpleExpression(e)) &&
-              agg.collectAggregateExprs.forall(e => pushableAggExp(e) || pushableCountExp(e)) &&
-              supportedJoin(j) =>
-          pushAggThroughJoin(agg, j.output, leftKeys, rightKeys, j)
+        j @ Join(_, _, Inner | LeftOuter | RightOuter, condition, _))
+          if groupExps.forall(_.isInstanceOf[Attribute]) &&
+            aggExps.forall(e => e.deterministic && isSimpleExpression(e)) &&
+            agg.collectAggregateExprs.forall(e => pushableAggExp(e) || pushableCountExp(e)) =>
+          pushAggThroughJoin(agg, j.output, j)
 
         case agg @ Aggregate(groupExps, aggExps, Project(projectList,
-          j @ ExtractEquiJoinKeys(Inner, leftKeys, rightKeys, None, _, _, _, _)))
-            if groupExps.forall(_.isInstanceOf[Attribute]) && leftKeys.nonEmpty &&
-              aggExps.forall(e => e.deterministic && isSimpleExpression(e)) &&
-              projectList.forall(_.deterministic) &&
-              agg.collectAggregateExprs.forall(e => pushableAggExp(e) || pushableCountExp(e)) &&
-              supportedJoin(j) =>
-          pushAggThroughJoin(agg, projectList, leftKeys, rightKeys, j)
+        j @ Join(_, _, Inner | LeftOuter | RightOuter, _, _)))
+          if groupExps.forall(_.isInstanceOf[Attribute]) &&
+            aggExps.forall(e => e.deterministic && isSimpleExpression(e)) &&
+            projectList.forall(_.deterministic) &&
+            agg.collectAggregateExprs.forall(e => pushableAggExp(e) || pushableCountExp(e)) =>
+          pushAggThroughJoin(agg, projectList, j)
       }
     }
   }

@@ -217,10 +217,6 @@ abstract class Optimizer(catalogManager: CatalogManager)
     // aggregate distinct column
     Batch("Distinct Aggregate Rewrite", Once,
       RewriteDistinctAggregates) :+
-    Batch("Partial Aggregation Optimization", fixedPoint,
-      PushPartialAggregationThroughJoin,
-      DeduplicateRightSideOfLeftSemiAntiJoin,
-      PushDownPartialAggregation) :+
     Batch("Object Expressions Optimization", fixedPoint,
       EliminateMapObjects,
       CombineTypedFilters,
@@ -233,6 +229,11 @@ abstract class Optimizer(catalogManager: CatalogManager)
       // non-nullable when an empty relation child of a Union is removed
       UpdateAttributeNullability) :+
     Batch("Optimize One Row Plan", fixedPoint, OptimizeOneRowPlan) :+
+    Batch("Partial Aggregation Optimization", Once,
+      PushPartialAggregationThroughJoin,
+      DeduplicateRightSideOfLeftSemiAntiJoin) :+
+    Batch("Push down partial agg", fixedPoint,
+      PushDownPartialAggregation) :+
     // The following batch should be executed after batch "Join Reorder" and "LocalRelation".
     Batch("Check Cartesian Products", Once,
       CheckCartesianProducts) :+
@@ -1775,7 +1776,7 @@ object PushPredicateThroughNonJoin extends Rule[LogicalPlan] with PredicateHelpe
    * subqueries in the condition do not contain the same attributes as the plan they are moved
    * into. This can happen when the plan and predicate subquery have the same source.
    */
-  private def canPushThroughCondition(plan: LogicalPlan, condition: Expression): Boolean = {
+  private[sql] def canPushThroughCondition(plan: LogicalPlan, condition: Expression): Boolean = {
     val attributes = plan.outputSet
     !condition.exists {
       case s: SubqueryExpression => s.plan.outputSet.intersect(attributes).nonEmpty
@@ -1803,7 +1804,7 @@ object PushPredicateThroughJoin extends Rule[LogicalPlan] with PredicateHelper {
    *
    * @return (canEvaluateInLeft, canEvaluateInRight, haveToEvaluateInBoth)
    */
-  private def split(condition: Seq[Expression], left: LogicalPlan, right: LogicalPlan) = {
+  private[sql] def split(condition: Seq[Expression], left: LogicalPlan, right: LogicalPlan) = {
     val (pushDownCandidates, nonDeterministic) = condition.partition(_.deterministic)
     val (leftEvaluateCondition, rest) =
       pushDownCandidates.partition(_.references.subsetOf(left.outputSet))

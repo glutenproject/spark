@@ -17,6 +17,7 @@
 
 package org.apache.spark.sql.catalyst.optimizer
 
+import org.apache.spark.sql.catalyst.optimizer.PushPartialAggregationThroughJoin.pushPartialAggHasBenefit
 import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -37,7 +38,7 @@ object DeduplicateRightSideOfLeftSemiAntiJoin extends Rule[LogicalPlan] with Joi
         case j @ Join(_, _: AggregateBase, _, _, _) =>
           j
         case j @ Join(_, right, LeftSemiOrAnti(_), _, _)
-            if PushPartialAggregationThroughJoin.pushPartialAggHasBenefit(right.output, right) =>
+          if pushPartialAggHasBenefit(right.output, right, canPlanAsBroadcastHashJoin(j, conf)) =>
           j.copy(right = PartialAggregate(right.output, right.output, right))
       }
     }

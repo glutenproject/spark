@@ -18,12 +18,11 @@
 package org.apache.spark.sql.catalyst.optimizer
 
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.planning.ExtractEquiJoinKeys
-import org.apache.spark.sql.catalyst.plans._
+import org.apache.spark.sql.catalyst.optimizer.PushPartialAggregationThroughJoin.pushPartialAggHasBenefit
+import org.apache.spark.sql.catalyst.planning.ExtractPushablePartialAggAndJoins
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.JOIN
-
 
 object PushDownPartialAggregation extends Rule[LogicalPlan]
   with JoinSelectionHelper
@@ -44,6 +43,38 @@ object PushDownPartialAggregation extends Rule[LogicalPlan]
     PartialAggregate(partialGroupingExps, deduplicateNamedExpressions(partialAggExps), plan)
   }
 
+  private def pushDownPartialAggregation(
+      groupExps: Seq[Attribute],
+      leftKeys: Seq[Attribute],
+      rightKeys: Seq[Attribute],
+      agg: PartialAggregate,
+      join: Join): LogicalPlan = {
+    val aggRefs = AttributeSet(agg.collectAggregateExprs.flatMap(_.references))
+    val canPushLeft = aggRefs.subsetOf(join.left.outputSet) && canPruneRight(join.joinType)
+    val canPushRight = aggRefs.subsetOf(join.right.outputSet) && canPruneLeft(join.joinType)
+    lazy val pushedLeft = constructPartialAgg(
+      leftKeys,
+      groupExps.filter(_.references.subsetOf(join.left.outputSet)),
+      agg.aggregateExpressions.filter(_.references.subsetOf(join.left.outputSet)),
+      join.left)
+    lazy val pushedRight = constructPartialAgg(
+      rightKeys,
+      groupExps.filter(_.references.subsetOf(join.right.outputSet)),
+      agg.aggregateExpressions.filter(_.references.subsetOf(join.right.outputSet)),
+      join.right)
+
+    if (canPushLeft && pushPartialAggHasBenefit(
+      leftKeys ++ groupExps.filter(_.references.subsetOf(join.left.outputSet)), join.left,
+      canPlanAsBroadcastHashJoin(join, conf))) {
+      Project(agg.aggregateExpressions.map(_.toAttribute), join.copy(left = pushedLeft))
+    } else if (canPushRight && pushPartialAggHasBenefit(
+      rightKeys ++ groupExps.filter(_.references.subsetOf(join.right.outputSet)), join.right,
+      canPlanAsBroadcastHashJoin(join, conf))) {
+      Project(agg.aggregateExpressions.map(_.toAttribute), join.copy(right = pushedRight))
+    } else {
+      agg
+    }
+  }
 
   def apply(plan: LogicalPlan): LogicalPlan = {
     if (!conf.partialAggregationOptimizationEnabled) {
@@ -53,32 +84,8 @@ object PushDownPartialAggregation extends Rule[LogicalPlan]
         case agg @ PartialAggregate(_, _, j: Join)
           if j.children.exists(_.isInstanceOf[AggregateBase]) =>
           agg
-        case agg @ PartialAggregate(groupings, aggs, Project(_,
-        j @ ExtractEquiJoinKeys(Inner, leftKeys, rightKeys, _, _, left, right, _)))
-          if canPlanAsBroadcastHashJoin(j, conf) &&
-            !j.children.exists(_.isInstanceOf[AggregateBase]) =>
-          val aggRefs = AttributeSet(agg.collectAggregateExprs.flatMap(_.references))
-          if (aggRefs.subsetOf(j.left.outputSet) && leftKeys.forall(_.isInstanceOf[Attribute])) {
-            val pushedLeft = constructPartialAgg(
-              leftKeys.map(_.asInstanceOf[Attribute]),
-              groupings.filter(_.references.subsetOf(left.outputSet))
-                .map(_.asInstanceOf[Attribute]),
-              aggs.filter(_.references.subsetOf(left.outputSet)),
-              left)
-            val newChild = Project(aggs.map(_.toAttribute), j.copy(left = pushedLeft))
-            newChild
-          } else if (aggRefs.subsetOf(j.right.outputSet)) {
-            val pushedRight = constructPartialAgg(
-              rightKeys.map(_.asInstanceOf[Attribute]),
-              groupings.filter(_.references.subsetOf(right.outputSet))
-                .map(_.asInstanceOf[Attribute]),
-              aggs.filter(_.references.subsetOf(right.outputSet)),
-              right)
-            val newChild = Project(aggs.map(_.toAttribute), j.copy(right = pushedRight))
-            newChild
-          } else {
-            agg
-          }
+        case ExtractPushablePartialAggAndJoins(groupExps, leftKeys, rightKeys, agg, j) =>
+          pushDownPartialAggregation(groupExps, leftKeys, rightKeys, agg, j)
       }
     }
   }
