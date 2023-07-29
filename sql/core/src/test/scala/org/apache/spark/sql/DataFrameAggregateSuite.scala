@@ -1449,6 +1449,177 @@ class DataFrameAggregateSuite extends QueryTest
     val df = Seq(1).toDF("id").groupBy(Stream($"id" + 1, $"id" + 2): _*).sum("id")
     checkAnswer(df, Row(2, 3, 1))
   }
+
+  test("test EliminateJoinByCombineAggregate") {
+    val df = spark.sparkContext.parallelize(Seq(
+      Fact(20151123, 18, 35, "room1", 18.6),
+      Fact(20151123, 18, 35, "room2", 22.4),
+      Fact(20151123, 18, 36, "room1", 17.4),
+      Fact(20151123, 18, 36, "room2", 25.6),
+      Fact(20151124, 19, 45, "room1", 18.7),
+      Fact(20151124, 19, 25, "room2", 32.4),
+      Fact(20151124, 19, 26, "room1", 17.8),
+      Fact(20151124, 19, 26, "room2", 23.6),
+      Fact(20151125, 20, 15, "room1", 28.1),
+      Fact(20151125, 20, 25, "room2", 22.8),
+      Fact(20151125, 20, 36, "room1", 27.3),
+      Fact(20151125, 20, 46, "room2", 13.2),
+      Fact(20151125, 20, 59, "room2", 53.9))).toDF()
+
+    Seq(false, true).foreach { enabled =>
+      withSQLConf(SQLConf.ELIMINATE_JOIN_BY_COMBINE_AGGREGATE_ENABLED.key -> enabled.toString) {
+        // join two side are Aggregates without Filter
+        val join1 =
+          df.agg(sum($"temp").as("sum_temp")).join(
+            df.agg(sum($"temp").as("sum_temp")))
+        checkAnswer(join1, Row(321.79999999999995, 321.79999999999995))
+
+        // join two side are Aggregates with Filter
+        val join2 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(sum($"temp").as("sum_temp")))
+        checkAnswer(join2, Row(84.0, 92.5))
+
+        val join3 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp")))
+        checkAnswer(join3, Row(84.0, 23.125))
+
+        val join4 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"minute").as("avg_minute")))
+        checkAnswer(join4, Row(84.0, 30.5))
+
+        val join5 =
+          df.where($"date" === 20151123).agg(
+            sum($"temp").as("sum_temp"),
+            count($"minute").as("count_minute")).join(
+            df.where($"date" === 20151124).agg(avg($"minute").as("avg_minute")))
+        checkAnswer(join5, Row(84.0, 4, 30.5))
+
+        val join6 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(
+              avg($"minute").as("avg_minute"),
+              count($"minute").as("count_minute")))
+        checkAnswer(join6, Row(84.0, 30.5, 4))
+
+        // all side of nested join are Aggregates
+        val join7 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp"))).join(
+            df.where($"date" === 20151125).agg(count($"temp").as("count_temp")))
+        checkAnswer(join7, Row(84.0, 23.125, 5))
+
+        val join8 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp")).join(
+              df.where($"date" === 20151125).agg(count($"temp").as("count_temp"))))
+        checkAnswer(join8, Row(84.0, 23.125, 5))
+
+        val join9 =
+          df.where($"date" === 20151123).agg(
+            avg($"minute").as("avg_minute"),
+            sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(
+              avg($"temp").as("avg_temp"),
+              sum($"minute").as("sum_minute")).join(
+              df.where($"date" === 20151125).agg(
+                count($"minute").as("count_minute"),
+                count($"temp").as("count_temp"),
+                count($"room_name").as("count_room_name"))))
+        checkAnswer(join9, Row(35.5, 84.0, 23.125, 122, 5, 5, 5))
+
+        val join10 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp")),
+            Seq.empty, "inner").join(
+            df.where($"date" === 20151125).agg(count($"temp").as("count_temp")))
+        checkAnswer(join10, Row(84.0, 23.125, 5))
+
+        val join11 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp")),
+            Seq.empty, "cross").join(
+            df.where($"date" === 20151125).agg(count($"temp").as("count_temp")))
+        checkAnswer(join11, Row(84.0, 23.125, 5))
+
+        val join12 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp")),
+            Seq.empty, "left_outer").join(
+            df.where($"date" === 20151125).agg(count($"temp").as("count_temp")))
+        checkAnswer(join12, Row(84.0, 23.125, 5))
+
+        val join13 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp")),
+            Seq.empty, "right_outer").join(
+            df.where($"date" === 20151125).agg(count($"temp").as("count_temp")))
+        checkAnswer(join13, Row(84.0, 23.125, 5))
+
+        val join14 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp")),
+            Seq.empty, "full_outer").join(
+            df.where($"date" === 20151125).agg(count($"temp").as("count_temp")))
+        checkAnswer(join14, Row(84.0, 23.125, 5))
+
+        // PushLeftSemiLeftAntiThroughJoin push LEFT SEMI and LEFT ANTI through JOIN,
+        // So EliminateJoinByCombineAggregate can't eliminate JOIN.
+        val join15 =
+        df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+          df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp"))).join(
+          df.where($"date" === 20151125).agg(count($"temp").as("count_temp")),
+          Seq.empty, "left_semi")
+        checkAnswer(join15, Row(84.0, 23.125))
+
+        val join16 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp"))).join(
+            df.where($"date" === 20151125).agg(count($"temp").as("count_temp")),
+            Seq.empty, "left_anti")
+        checkAnswer(join16, Seq.empty)
+
+        // ReorderJoin push the join condition into upstream JOIN,
+        // So EliminateJoinByCombineAggregate can't eliminate JOIN.
+        val join17 =
+        df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+          df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp"))).as("left").join(
+          df.where($"date" === 20151125).agg(count($"temp").as("count_temp")).as("right"),
+          $"left.sum_temp" === $"right.count_temp", "inner")
+        checkAnswer(join17, Seq.empty)
+
+        val join18 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp"))).as("left").join(
+            df.where($"date" === 20151125).agg(count($"temp").as("count_temp")).as("right"),
+            $"left.sum_temp" === $"right.count_temp", "cross")
+        checkAnswer(join18, Seq.empty)
+
+        val join19 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp"))).as("left").join(
+            df.where($"date" === 20151125).agg(count($"temp").as("count_temp")).as("right"),
+            $"left.sum_temp" === $"right.count_temp", "left_outer")
+        checkAnswer(join19, Row(84.0, 23.125, null))
+
+        val join20 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp"))).as("left").join(
+            df.where($"date" === 20151125).agg(count($"temp").as("count_temp")).as("right"),
+            $"left.sum_temp" === $"right.count_temp", "right_outer")
+        checkAnswer(join20, Row(null, null, 5))
+
+        val join21 =
+          df.where($"date" === 20151123).agg(sum($"temp").as("sum_temp")).join(
+            df.where($"date" === 20151124).agg(avg($"temp").as("avg_temp"))).as("left").join(
+            df.where($"date" === 20151125).agg(count($"temp").as("count_temp")).as("right"),
+            $"left.sum_temp" === $"right.count_temp", "full_outer")
+        checkAnswer(join21, Seq(Row(84.0, 23.125, null), Row(null, null, 5)))
+      }
+    }
+  }
 }
 
 case class B(c: Option[Double])
