@@ -22,6 +22,7 @@ import scala.annotation.tailrec
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.BloomFilterAggregate
 import org.apache.spark.sql.catalyst.planning.ExtractEquiJoinKeys
+import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.{INVOKE, JSON_TO_STRUCT, LIKE_FAMLIY, PYTHON_UDF, REGEXP_EXTRACT_FAMILY, REGEXP_REPLACE, SCALA_UDF}
@@ -184,15 +185,20 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
       REGEXP_EXTRACT_FAMILY, REGEXP_REPLACE)
   }
 
-  private def isProbablyShuffleJoin(left: LogicalPlan,
-      right: LogicalPlan, hint: JoinHint): Boolean = {
-    !hintToBroadcastLeft(hint) && !hintToBroadcastRight(hint) &&
-      !canBroadcastBySize(left, conf) && !canBroadcastBySize(right, conf)
+  private def isProbablyShuffleJoin(
+      left: LogicalPlan,
+      right: LogicalPlan,
+      hint: JoinHint,
+      joinType: JoinType): Boolean = {
+    // If any of the side can be broadcast, then it is not a shuffle join.
+    !canLeftSideBeBroadcast(left, conf, hint, joinType) &&
+      !canRightSideBeBroadcast(right, conf, hint, joinType)
   }
 
   private def probablyHasShuffle(plan: LogicalPlan): Boolean = {
     plan.exists {
-      case Join(left, right, _, _, hint) => isProbablyShuffleJoin(left, right, hint)
+      case Join(left, right, joinType, _, hint) =>
+        isProbablyShuffleJoin(left, right, hint, joinType)
       case _: Aggregate => true
       case _: Window => true
       case _ => false
@@ -237,11 +243,10 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
       filterCreationSide: LogicalPlan,
       filterApplicationSideExp: Expression,
       filterCreationSideExp: Expression,
-      hint: JoinHint): Option[LogicalPlan] = {
+      isProbablyShuffleJoin: Boolean): Option[LogicalPlan] = {
     if (findExpressionAndTrackLineageDown(
       filterApplicationSideExp, filterApplicationSide).isDefined &&
-      (isProbablyShuffleJoin(filterApplicationSide, filterCreationSide, hint) ||
-        probablyHasShuffle(filterApplicationSide)) &&
+      (isProbablyShuffleJoin || probablyHasShuffle(filterApplicationSide)) &&
       satisfyByteSizeRequirement(filterApplicationSide)) {
       extractSelectiveFilterOverScan(filterCreationSide, filterCreationSideExp)
     } else {
@@ -315,6 +320,10 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
       case join @ ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, _, _, left, right, hint) =>
         var newLeft = left
         var newRight = right
+        // Whether it is a shuffle join or not should be based on the actual left and
+        // right table. For some join like left outer join, it will be a shuffle join
+        // even if left side table size is smaller than broadcast threshold.
+        val isShuffleJoin = isProbablyShuffleJoin(left, right, hint, joinType)
         (leftKeys, rightKeys).zipped.foreach((l, r) => {
           // Check if:
           // 1. There is already a DPP filter on the key
@@ -327,14 +336,14 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
             val oldLeft = newLeft
             val oldRight = newRight
             if (canPruneLeft(joinType)) {
-              extractBeneficialFilterCreatePlan(left, right, l, r, hint).foreach {
+              extractBeneficialFilterCreatePlan(left, right, l, r, isShuffleJoin).foreach {
                 filterCreationSidePlan =>
                   newLeft = injectFilter(l, newLeft, r, filterCreationSidePlan)
               }
             }
             // Did we actually inject on the left? If not, try on the right
             if (newLeft.fastEquals(oldLeft) && canPruneRight(joinType)) {
-              extractBeneficialFilterCreatePlan(right, left, r, l, hint).foreach {
+              extractBeneficialFilterCreatePlan(right, left, r, l, isShuffleJoin).foreach {
                 filterCreationSidePlan =>
                   newRight = injectFilter(r, newRight, l, filterCreationSidePlan)
               }
