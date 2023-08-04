@@ -158,6 +158,7 @@ case class RankLimitIterator(
   override def reset(): Unit = {
     rank = 0
     count = 0
+    currentRankRow = null
   }
 }
 
@@ -180,6 +181,7 @@ case class DenseRankLimitIterator(
 
   override def reset(): Unit = {
     rank = 0
+    currentRankRow = null
   }
 }
 
