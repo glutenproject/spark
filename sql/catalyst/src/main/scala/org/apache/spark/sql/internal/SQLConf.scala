@@ -3787,6 +3787,14 @@ object SQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val COMBINE_UNIONED_SUBQUERYS_ENABLED =
+    buildConf("spark.sql.optimizer.combineUnionedSubquery.enabled")
+      .doc("When true, we attempt to eliminate union by combine subquery " +
+        "to reduce the scan times and avoid shuffle.")
+      .version("3.5.0")
+      .booleanConf
+      .createWithDefault(true)
+
   /**
    * Holds information about keys that have been deprecated.
    *
@@ -4551,6 +4559,9 @@ class SQLConf extends Serializable with Logging {
 
   def histogramNumericPropagateInputType: Boolean =
     getConf(SQLConf.HISTOGRAM_NUMERIC_PROPAGATE_INPUT_TYPE)
+
+  def combineUnionedAggregatesEnabled: Boolean =
+    getConf(SQLConf.COMBINE_UNIONED_SUBQUERYS_ENABLED)
 
   /** ********************** SQLConf functionality methods ************ */
 
