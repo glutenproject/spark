@@ -115,7 +115,8 @@ case class InsertAdaptiveSparkPlan(
    */
   private def buildSubqueryMap(plan: SparkPlan): Map[Long, BaseSubqueryExec] = {
     val subqueryMap = mutable.HashMap.empty[Long, BaseSubqueryExec]
-    if (!plan.containsAnyPattern(SCALAR_SUBQUERY, IN_SUBQUERY, DYNAMIC_PRUNING_SUBQUERY)) {
+    if (!plan.containsAnyPattern(
+      SCALAR_SUBQUERY, IN_SUBQUERY, DYNAMIC_PRUNING_SUBQUERY, RUNTIME_FILTER_SUBQUERY)) {
       return subqueryMap.toMap
     }
     plan.foreach(_.expressions.filter(_.containsPattern(PLAN_EXPRESSION)).foreach(_.foreach {
@@ -142,6 +143,16 @@ case class InsertAdaptiveSparkPlan(
         val subquery = SubqueryAdaptiveBroadcastExec(
           name, broadcastKeyIndex, onlyInBroadcast,
           buildPlan, buildKeys, executedPlan)
+        subqueryMap.put(exprId.id, subquery)
+      case expressions.RuntimeFilterSubquery(_, buildPlan, buildKey, exprId)
+        if !subqueryMap.contains(exprId.id) =>
+        val executedPlan = compileSubquery(buildPlan)
+        verifyAdaptivePlan(executedPlan, buildPlan)
+
+        val name = s"runtimefilter#${exprId.id}"
+        val subquery = SubqueryAdaptiveBroadcastExec(
+          name, 0, true,
+          buildPlan, Seq(buildKey), executedPlan)
         subqueryMap.put(exprId.id, subquery)
       case _ =>
     }))

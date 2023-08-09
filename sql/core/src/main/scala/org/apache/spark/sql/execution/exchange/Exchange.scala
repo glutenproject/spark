@@ -20,7 +20,7 @@ package org.apache.spark.sql.execution.exchange
 import org.apache.spark.broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeMap, Expression, SortOrder}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeMap, AttributeSet, Expression, SortOrder}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.trees.TreePattern._
 import org.apache.spark.sql.execution._
@@ -90,4 +90,22 @@ case class ReusedExchangeExec(override val output: Seq[Attribute], child: Exchan
        |${ExplainUtils.generateFieldString("Output", output)}
        |""".stripMargin
   }
+}
+
+/**
+ * A proxy class for [[SubqueryBroadcastExec]], because [[SubqueryBroadcastExec]] doesn't support
+ * `execute`. The proxy class will convert the calling from `execute` to `executeCollect`.
+ */
+case class BroadcastExchangeExecProxy(
+    child: SparkPlan, output: Seq[Attribute]) extends UnaryExecNode {
+
+  override def producedAttributes: AttributeSet = AttributeSet(output)
+
+  def doExecute(): RDD[InternalRow] = {
+    val broadcastedValues = child.executeCollect()
+    session.sparkContext.parallelize(broadcastedValues, 1)
+  }
+
+  override protected def withNewChildInternal(newChild: SparkPlan): BroadcastExchangeExecProxy =
+    copy(child = newChild)
 }
