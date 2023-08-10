@@ -19,60 +19,43 @@ package org.apache.spark.sql.catalyst.expressions
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
-import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.trees.TreePattern.{RUNTIME_FILTER_EXPRESSION, RUNTIME_FILTER_SUBQUERY, TreePattern}
 import org.apache.spark.sql.catalyst.trees.UnaryLike
-import org.apache.spark.sql.types.DataType
+import org.apache.spark.sql.types.{BinaryType, DataType}
 
 /**
  * The RuntimeFilterSubquery expression is only used in runtime filter. It is inserted in cases
  * when broadcast exchange can be reused.
  *
  * @param filterApplicationSideExp the filtering key of the application side.
- * @param buildPlan the bloom filter plan of build side.
- * @param joinKeys the join keys corresponding to the build side of the join
- * @param broadcastKeyIndex the index of the filtering key collected from the broadcast
+ * @param filterCreationSidePlan the build side of the join.
+ * @param filterCreationSideExp the key of the creation side.
  */
 case class RuntimeFilterSubquery(
     filterApplicationSideExp: Expression,
-    buildPlan: LogicalPlan,
-    joinKeys: Seq[Expression],
-    broadcastKeyIndex: Int,
+    filterCreationSidePlan: LogicalPlan,
+    filterCreationSideExp: Expression,
     exprId: ExprId = NamedExpression.newExprId)
-  extends SubqueryExpression(buildPlan, Seq(filterApplicationSideExp), exprId)
+  extends SubqueryExpression(filterCreationSidePlan, Seq(filterApplicationSideExp), exprId)
     with Unevaluable
     with UnaryLike[Expression] {
 
   override def child: Expression = filterApplicationSideExp
 
-  override def dataType: DataType = {
-    assert(buildPlan.schema.fields.nonEmpty,
-      "Runtime filter subquery should have only one column")
-    buildPlan.schema.fields.head.dataType
-  }
+  override def dataType: DataType = BinaryType
 
-  override def plan: LogicalPlan = buildPlan
+  override def plan: LogicalPlan = filterCreationSidePlan
 
   override def nullable: Boolean = false
 
   override def withNewPlan(plan: LogicalPlan): RuntimeFilterSubquery =
-    copy(buildPlan = plan)
+    copy(filterCreationSidePlan = plan)
 
-  lazy val filterCreationSidePlan: LogicalPlan = {
-    assert(buildPlan.isInstanceOf[Aggregate])
-    buildPlan.asInstanceOf[Aggregate].child
-  }
-
-  override lazy val resolved: Boolean = {
+  override lazy val resolved: Boolean =
     filterApplicationSideExp.resolved &&
-      buildPlan.resolved &&
-      joinKeys.nonEmpty &&
-      joinKeys.forall(_.resolved) &&
-      broadcastKeyIndex >= 0 &&
-      broadcastKeyIndex < joinKeys.size &&
-      joinKeys.forall(_.references.subsetOf(filterCreationSidePlan.outputSet)) &&
-      filterApplicationSideExp.dataType == joinKeys(broadcastKeyIndex).dataType
-  }
+      filterCreationSidePlan.resolved &&
+      filterCreationSideExp.resolved
 
   final override def nodePatternsInternal: Seq[TreePattern] = Seq(RUNTIME_FILTER_SUBQUERY)
 
@@ -81,8 +64,8 @@ case class RuntimeFilterSubquery(
   override lazy val canonicalized: RuntimeFilterSubquery = {
     copy(
       filterApplicationSideExp = filterApplicationSideExp.canonicalized,
-      buildPlan = buildPlan.canonicalized,
-      joinKeys = joinKeys.map(_.canonicalized),
+      filterCreationSidePlan = filterCreationSidePlan.canonicalized,
+      filterCreationSideExp = filterCreationSideExp.canonicalized,
       exprId = ExprId(0))
   }
 
