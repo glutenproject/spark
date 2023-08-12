@@ -23,7 +23,7 @@ import org.apache.spark.sql.catalyst.optimizer.{BuildLeft, BuildRight}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.RUNTIME_FILTER_SUBQUERY
 import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
-import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, BroadcastExchangeExecProxy, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, ShuffleExchangeExecProxy, ShuffleExchangeExec}
 import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, HashedRelationBroadcastMode, HashJoin}
 
 /**
@@ -66,7 +66,7 @@ case class PlanRuntimeFilterFilters(sparkSession: SparkSession) extends Rule[Spa
           val name = s"runtimefilter#${exprId.id}"
           val broadcastValues = SubqueryBroadcastExec(name, 0, Seq(buildKey), exchange)
           val broadcastProxy =
-            BroadcastExchangeExecProxy(broadcastValues, executedFilterCreationSidePlan.output)
+            ShuffleExchangeExecProxy(broadcastValues, executedFilterCreationSidePlan.output)
 
           val newExecutedPlan = executedPlan transformUp {
             case hashAggregateExec: ObjectHashAggregateExec

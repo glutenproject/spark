@@ -93,10 +93,10 @@ case class ReusedExchangeExec(override val output: Seq[Attribute], child: Exchan
 }
 
 /**
- * A proxy class for [[SubqueryBroadcastExec]], because [[SubqueryBroadcastExec]] doesn't support
+ * A proxy class for [[ShuffleExchangeExec]], because [[ShuffleExchangeExec]] doesn't support
  * `execute`. The proxy class will convert the calling from `execute` to `executeCollect`.
  */
-case class BroadcastExchangeExecProxy(
+case class ShuffleExchangeExecProxy(
     child: SparkPlan, output: Seq[Attribute]) extends UnaryExecNode {
 
   override def producedAttributes: AttributeSet = AttributeSet(output)
@@ -106,6 +106,6 @@ case class BroadcastExchangeExecProxy(
     session.sparkContext.parallelize(broadcastedValues, 1)
   }
 
-  override protected def withNewChildInternal(newChild: SparkPlan): BroadcastExchangeExecProxy =
+  override protected def withNewChildInternal(newChild: SparkPlan): ShuffleExchangeExecProxy =
     copy(child = newChild)
 }
