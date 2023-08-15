@@ -73,7 +73,7 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
       filterCreationSideExp: Expression,
       filterCreationSidePlan: LogicalPlan): LogicalPlan = {
     // Skip if the filter creation side is too big
-    if (!filterCreationSidePlan.isInstanceOf[Join] &&
+    if (!filterCreationSidePlan.isInstanceOf[ProjectAdapter] &&
       filterCreationSidePlan.stats.sizeInBytes > conf.runtimeFilterCreationSideThreshold) {
       return filterApplicationSidePlan
     }
@@ -90,7 +90,7 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     val aggregate =
       ConstantFolding(ColumnPruning(Aggregate(Nil, Seq(alias), filterCreationSidePlan)))
     val bloomFilterSubquery = filterCreationSidePlan match {
-      case _: Join if conf.exchangeReuseEnabled =>
+      case _: ProjectAdapter =>
         RuntimeFilterSubquery(filterApplicationSideExp, aggregate, filterCreationSideExp)
       case _ =>
         ScalarSubquery(aggregate, Nil)
@@ -348,6 +348,26 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     }
   }
 
+  private def findSimilarJoin(
+      plan: LogicalPlan, filterCreationSidePlan: LogicalPlan): Option[LogicalPlan] = {
+    filterCreationSidePlan match {
+      case _: Join if conf.exchangeReuseEnabled =>
+        val adapters = plan collect {
+          case p @ Project(projectList, join: Join)
+            if join.canonicalized == filterCreationSidePlan.canonicalized =>
+            ProjectAdapter(projectList, p)
+        }
+
+        if (adapters.nonEmpty) {
+          Some(adapters.head)
+        } else {
+          None
+        }
+      case _: Join => None
+      case other => Some(other)
+    }
+  }
+
   private def tryInjectRuntimeFilter(plan: LogicalPlan): LogicalPlan = {
     var filterCounter = 0
     val numFilterThreshold = conf.getConf(SQLConf.RUNTIME_FILTER_NUMBER_THRESHOLD)
@@ -369,14 +389,18 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
             if (canPruneLeft(joinType)) {
               extractBeneficialFilterCreatePlan(left, right, l, r, hint).foreach {
                 filterCreationSidePlan =>
-                  newLeft = injectFilter(l, newLeft, r, filterCreationSidePlan)
+                  findSimilarJoin(plan, filterCreationSidePlan).foreach { p =>
+                    newRight = injectFilter(l, newLeft, r, p)
+                  }
               }
             }
             // Did we actually inject on the left? If not, try on the right
             if (newLeft.fastEquals(oldLeft) && canPruneRight(joinType)) {
               extractBeneficialFilterCreatePlan(right, left, r, l, hint).foreach {
                 filterCreationSidePlan =>
-                  newRight = injectFilter(r, newRight, l, filterCreationSidePlan)
+                  findSimilarJoin(plan, filterCreationSidePlan).foreach { p =>
+                    newRight = injectFilter(r, newRight, l, p)
+                  }
               }
             }
             if (!newLeft.fastEquals(oldLeft) || !newRight.fastEquals(oldRight)) {

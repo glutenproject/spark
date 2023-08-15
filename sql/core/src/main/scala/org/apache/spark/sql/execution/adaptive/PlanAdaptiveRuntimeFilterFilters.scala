@@ -17,12 +17,12 @@
 
 package org.apache.spark.sql.execution.adaptive
 
-import org.apache.spark.sql.catalyst.expressions.{AttributeSet, NamedExpression, RuntimeFilterExpression}
+import org.apache.spark.sql.catalyst.expressions.{AttributeSet, RuntimeFilterExpression}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.{RUNTIME_FILTER_EXPRESSION, SUBQUERY_WRAPPER}
-import org.apache.spark.sql.execution.{FilterExec, ProjectExec, ScalarSubquery, SparkPlan, SubqueryAdaptiveBroadcastExec, SubqueryExec, SubqueryWrapper}
+import org.apache.spark.sql.execution.{FilterExec, InputAdapter, ProjectExec, ScalarSubquery, SparkPlan, SubqueryAdaptiveBroadcastExec, SubqueryExec, SubqueryWrapper}
 import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
-import org.apache.spark.sql.execution.exchange.{ShuffleExchangeExecProxy, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.exchange.{Exchange, ShuffleExchangeExec}
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 
 /**
@@ -43,38 +43,67 @@ case class PlanAdaptiveRuntimeFilterFilters(
           adaptivePlan: AdaptiveSparkPlanExec), exprId)) =>
         val filterCreationSidePlan = getFilterCreationSidePlan(adaptivePlan.executedPlan)
 
-        var exchange = filterCreationSidePlan
-        val canReuseExchange = conf.exchangeReuseEnabled && buildKeys.nonEmpty &&
-          find(rootPlan) {
-            case e: ShuffleExchangeExec =>
-              val newPlan = adaptPlan(filterCreationSidePlan, e.child)
-              if (newPlan.isDefined && e.child.sameResult(newPlan.get)) {
-                exchange = ShuffleExchangeExec(e.outputPartitioning, newPlan.get, e.shuffleOrigin)
-                true
-              } else {
-                false
-              }
-            case _ => false
-          }.isDefined
+//        var exchange = filterCreationSidePlan
+//        val canReuseExchange = conf.exchangeReuseEnabled && buildKeys.nonEmpty &&
+//          find(rootPlan) {
+//            case BroadcastHashJoinExec(_, _, _, BuildLeft, _, left, _, _) =>
+//              left.sameResult(exchange)
+//            case BroadcastHashJoinExec(_, _, _, BuildRight, _, _, right, _) =>
+//              right.sameResult(exchange)
+////            case e: ShuffleExchangeExec =>
+////              val newPlan = adaptPlan(filterCreationSidePlan, e.child)
+////              if (newPlan.isDefined && e.child.sameResult(newPlan.get)) {
+////                exchange = ShuffleExchangeExec(e.outputPartitioning, newPlan.get, e.shuffleOrigin)
+////                true
+////              } else {
+////                false
+////              }
+//            case _ => false
+//          }.isDefined
 
-        val bloomFilterSubquery = if (canReuseExchange) {
-          exchange.setLogicalLink(filterCreationSidePlan.logicalLink.get)
+        val bloomFilterSubquery = if (conf.exchangeReuseEnabled && buildKeys.nonEmpty) {
+          val exchange = collectFirst(rootPlan) {
+//            case BroadcastHashJoinExec(_, _, _, BuildLeft, _, left, _, _)
+//              if left.sameResult(filterCreationSidePlan) =>
+//              left
+//            case BroadcastHashJoinExec(_, _, _, BuildRight, _, _, right, _)
+//              if right.sameResult(filterCreationSidePlan) =>
+//              right
+            case exchange: ShuffleExchangeExec
+              if exchange.child.sameResult(filterCreationSidePlan) &&
+                buildKeys.forall(k => exchange.output.exists(_.semanticEquals(k))) =>
+              ShuffleExchangeExec(
+                exchange.outputPartitioning, exchange.child, exchange.shuffleOrigin)
+          }.map(_.asInstanceOf[Exchange])
 
-          val newProject = ProjectExec(buildKeys.asInstanceOf[Seq[NamedExpression]], exchange)
-          val exchangeProxy =
-            ShuffleExchangeExecProxy(newProject, filterCreationSidePlan.output)
+          if (exchange.isDefined) {
+            exchange.get.setLogicalLink(filterCreationSidePlan.logicalLink.get)
 
-          val newExecutedPlan = adaptivePlan.executedPlan transformUp {
-            case hashAggregateExec: ObjectHashAggregateExec
-              if hashAggregateExec.child.eq(filterCreationSidePlan) =>
-              hashAggregateExec.copy(child = exchangeProxy)
+//            val newProject = ProjectExec(buildKeys.asInstanceOf[Seq[NamedExpression]], exchange)
+//            val exchangeProxy =
+//              ShuffleExchangeExecProxy(newProject, filterCreationSidePlan.output)
+
+            val newExecutedPlan = adaptivePlan.executedPlan transformUp {
+              case p @ ProjectExec(_, inputAdapter: InputAdapter)
+                if inputAdapter.child.canonicalized == exchange.get.child.canonicalized =>
+                val newInputAdapter = inputAdapter.withNewChildren(Seq(exchange.get))
+                p.withNewChildren(Seq(newInputAdapter))
+//              case hashAggregateExec: ObjectHashAggregateExec
+//                if hashAggregateExec.child.eq(filterCreationSidePlan) =>
+//                hashAggregateExec.copy(child = exchangeProxy)
+            }
+            val newAdaptivePlan = adaptivePlan.copy(inputPlan = newExecutedPlan)
+
+            ScalarSubquery(
+              SubqueryExec.createForScalarSubquery(
+                s"scalar-subquery#${exprId.id}",
+                newAdaptivePlan), exprId)
+          } else {
+            ScalarSubquery(
+              SubqueryExec.createForScalarSubquery(
+                s"scalar-subquery#${exprId.id}",
+                adaptivePlan), exprId)
           }
-          val newAdaptivePlan = adaptivePlan.copy(inputPlan = newExecutedPlan)
-
-          ScalarSubquery(
-            SubqueryExec.createForScalarSubquery(
-              s"scalar-subquery#${exprId.id}",
-              newAdaptivePlan), exprId)
         } else {
           ScalarSubquery(
             SubqueryExec.createForScalarSubquery(
@@ -94,6 +123,8 @@ case class PlanAdaptiveRuntimeFilterFilters(
         getFilterCreationSidePlan(shuffleExchange.child)
       case queryStageExec: ShuffleQueryStageExec =>
         getFilterCreationSidePlan(queryStageExec.plan)
+      case ProjectExec(_, inputAdapter: InputAdapter) =>
+        getFilterCreationSidePlan(inputAdapter.child)
       case other => other
     }
   }

@@ -18,8 +18,8 @@
 package org.apache.spark.sql.execution.adaptive
 
 import org.apache.spark.sql.errors.QueryExecutionErrors
-import org.apache.spark.sql.execution.{ProjectExec, SparkPlan}
-import org.apache.spark.sql.execution.exchange.{ShuffleExchangeExecProxy, ShuffleExchangeLike}
+import org.apache.spark.sql.execution.{InputAdapter, ProjectExec, SparkPlan}
+import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.joins.ShuffledJoin
 
 /**
@@ -46,7 +46,7 @@ case class SimpleCostEvaluator(forceOptimizeSkewedJoin: Boolean) extends CostEva
     }
 
     val cheapShuffles = plan.collect {
-      case ShuffleExchangeExecProxy(ProjectExec(_, s: ShuffleExchangeLike), _) => s
+      case ProjectExec(_, InputAdapter(s: ShuffleExchangeLike)) => s
     }
 
     val numShuffles = allShuffles.filter { s =>
