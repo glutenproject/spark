@@ -390,7 +390,7 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
               extractBeneficialFilterCreatePlan(left, right, l, r, hint).foreach {
                 filterCreationSidePlan =>
                   findSimilarJoin(plan, filterCreationSidePlan).foreach { p =>
-                    newRight = injectFilter(l, newLeft, r, p)
+                    newLeft = injectFilter(l, newLeft, r, p)
                   }
               }
             }
