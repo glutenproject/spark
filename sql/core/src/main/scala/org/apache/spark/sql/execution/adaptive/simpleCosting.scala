@@ -18,8 +18,8 @@
 package org.apache.spark.sql.execution.adaptive
 
 import org.apache.spark.sql.errors.QueryExecutionErrors
-import org.apache.spark.sql.execution.{InputAdapter, ProjectExec, SparkPlan}
-import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.exchange.{ReusedExchangeExec, ShuffleExchangeLike}
 import org.apache.spark.sql.execution.joins.ShuffledJoin
 
 /**
@@ -43,17 +43,14 @@ case class SimpleCostEvaluator(forceOptimizeSkewedJoin: Boolean) extends CostEva
   override def evaluateCost(plan: SparkPlan): Cost = {
     val allShuffles = plan.collect {
       case s: ShuffleExchangeLike => s
+      case ShuffleQueryStageExec(_, s: ShuffleExchangeLike, _) => s
     }
 
-    val cheapShuffles = plan.collect {
-      case ProjectExec(_, InputAdapter(s: ShuffleExchangeLike)) => s
+    val reusedShuffles = plan.collect {
+      case ShuffleQueryStageExec(_, r: ReusedExchangeExec, _) => r
     }
 
-    val numShuffles = allShuffles.filter { s =>
-      cheapShuffles.forall { c =>
-        c.canonicalized != s.canonicalized
-      }
-    }.size
+    val numShuffles = allShuffles.size - reusedShuffles.size
 
     if (forceOptimizeSkewedJoin) {
       val numSkewJoins = plan.collect {
@@ -62,8 +59,6 @@ case class SimpleCostEvaluator(forceOptimizeSkewedJoin: Boolean) extends CostEva
       // We put `-numSkewJoins` in the first 32 bits of the long value, so that it's compared first
       // when comparing the cost, and larger `numSkewJoins` means lower cost.
       SimpleCost(-numSkewJoins.toLong << 32 | numShuffles)
-    } else if (cheapShuffles.nonEmpty) {
-      SimpleCost(numShuffles - 1)
     } else {
       SimpleCost(numShuffles)
     }

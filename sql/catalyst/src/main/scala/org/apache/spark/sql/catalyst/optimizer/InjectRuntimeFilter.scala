@@ -119,6 +119,12 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     Filter(filter, filterApplicationSidePlan)
   }
 
+  private def notExistJoin(plan: LogicalPlan): Boolean = {
+    plan.collect {
+      case join: Join => join
+    }.isEmpty
+  }
+
   /**
    * Extracts a sub-plan which is a simple filter over scan from the input plan. The simple
    * filter should be selective and the filter condition (including expressions in the child
@@ -177,7 +183,7 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
           val extracted = extract(left, AttributeSet.empty, hasHitFilter = false,
             hasHitSelectiveFilter = false, currentPlan = left, currentHint = hint)
           if (extracted.isEmpty && conf.exchangeReuseEnabled &&
-            !hintToBroadcastRight(currentHint) && !canBroadcastBySize(join, conf)) {
+            !canBroadcastBySize(join, conf) && notExistJoin(left) && notExistJoin(right)) {
             val hasSelectiveFilter = extract(right, AttributeSet.empty, hasHitFilter = false,
               hasHitSelectiveFilter = false, currentPlan = right, currentHint = hint).isDefined
             if (hasSelectiveFilter) {
@@ -192,7 +198,7 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
           val extracted = extract(right, AttributeSet.empty, hasHitFilter = false,
             hasHitSelectiveFilter = false, currentPlan = right, currentHint = hint)
           if (extracted.isEmpty && conf.exchangeReuseEnabled &&
-            !hintToBroadcastRight(currentHint) && !canBroadcastBySize(join, conf)) {
+            !canBroadcastBySize(join, conf) && notExistJoin(left) && notExistJoin(right)) {
             val hasSelectiveFilter = extract(left, AttributeSet.empty, hasHitFilter = false,
               hasHitSelectiveFilter = false, currentPlan = left, currentHint = hint).isDefined
             if (hasSelectiveFilter) {
