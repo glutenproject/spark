@@ -18,13 +18,13 @@
 package org.apache.spark.sql.execution
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.{BindReferences, RuntimeFilterExpression, RuntimeFilterSubquery}
+import org.apache.spark.sql.catalyst.expressions.{RuntimeFilterExpression, RuntimeFilterSubquery}
 import org.apache.spark.sql.catalyst.optimizer.{BuildLeft, BuildRight}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.RUNTIME_FILTER_SUBQUERY
 import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
-import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, ShuffleExchangeExecProxy, ShuffleExchangeExec}
-import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, HashedRelationBroadcastMode, HashJoin}
+import org.apache.spark.sql.execution.exchange.{Exchange, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, SortMergeJoinExec}
 
 /**
  * This planner rule aims at rewriting runtime filter in order to reuse the
@@ -42,42 +42,53 @@ case class PlanRuntimeFilterFilters(sparkSession: SparkSession) extends Rule[Spa
         val sparkPlan = QueryExecution.createSparkPlan(
           sparkSession, sparkSession.sessionState.planner, buildPlan)
         val filterCreationSidePlan = getFilterCreationSidePlan(sparkPlan)
-
-        // Using `sparkPlan` is a little hacky as it is based on the assumption that this rule is
-        // the first to be applied (apart from `InsertAdaptiveSparkPlan`).
-        val canReuseExchange = conf.exchangeReuseEnabled &&
-          plan.exists {
-            case BroadcastHashJoinExec(_, _, _, BuildLeft, _, left, _, _) =>
-              left.sameResult(filterCreationSidePlan)
-            case BroadcastHashJoinExec(_, _, _, BuildRight, _, _, right, _) =>
-              right.sameResult(filterCreationSidePlan)
-            case _ => false
-          }
-
         val executedPlan = QueryExecution.prepareExecutedPlan(sparkSession, sparkPlan)
 
-        val bloomFilterSubquery = if (canReuseExchange) {
-          val executedFilterCreationSidePlan = getFilterCreationSidePlan(executedPlan)
-          val packedKeys = BindReferences.bindReferences(
-            HashJoin.rewriteKeyExpr(Seq(buildKey)), executedFilterCreationSidePlan.output)
-          val mode = HashedRelationBroadcastMode(packedKeys)
-          // plan a broadcast exchange of the build side of the join
-          val exchange = BroadcastExchangeExec(mode, executedFilterCreationSidePlan)
-          val name = s"runtimefilter#${exprId.id}"
-          val broadcastValues = SubqueryBroadcastExec(name, 0, Seq(buildKey), exchange)
-          val broadcastProxy =
-            ShuffleExchangeExecProxy(broadcastValues, executedFilterCreationSidePlan.output)
+        val bloomFilterSubquery = if (conf.exchangeReuseEnabled) {
 
-          val newExecutedPlan = executedPlan transformUp {
-            case hashAggregateExec: ObjectHashAggregateExec
-              if hashAggregateExec.child.eq(executedFilterCreationSidePlan) =>
-              hashAggregateExec.copy(child = broadcastProxy)
+          val exchange = plan collectFirst {
+            case BroadcastHashJoinExec(_, _, _, BuildLeft, _, left, _, _)
+              if left.sameResult(filterCreationSidePlan) =>
+              left
+            case BroadcastHashJoinExec(_, _, _, BuildRight, _, _, right, _)
+              if right.sameResult(filterCreationSidePlan) =>
+              right
+            case SortMergeJoinExec(_, _, _, _, left, _, _)
+              if left.sameResult(filterCreationSidePlan) =>
+              left
+            case SortMergeJoinExec(_, _, _, _, _, right, _)
+              if right.sameResult(filterCreationSidePlan) =>
+              right
+            case exchange: Exchange
+              if exchange.sameResult(filterCreationSidePlan) =>
+              exchange
+            case exchange: ShuffleExchangeExec
+              if exchange.child.sameResult(filterCreationSidePlan) &&
+                exchange.output.exists(_.semanticEquals(buildKey)) =>
+              ShuffleExchangeExec(
+                exchange.outputPartitioning, exchange.child, exchange.shuffleOrigin)
           }
 
-          ScalarSubquery(
-            SubqueryExec.createForScalarSubquery(
-              s"scalar-subquery#${exprId.id}",
-              newExecutedPlan), exprId)
+          if (exchange.isDefined) {
+            exchange.get.setLogicalLink(filterCreationSidePlan.logicalLink.get)
+
+            val newExecutedPlan = executedPlan transformUp {
+              case p @ ProjectExec(_, inputAdapter: InputAdapter)
+                if inputAdapter.child.canonicalized == exchange.get.canonicalized =>
+                val newInputAdapter = inputAdapter.withNewChildren(Seq(exchange.get))
+                p.withNewChildren(Seq(newInputAdapter))
+            }
+
+            ScalarSubquery(
+              SubqueryExec.createForScalarSubquery(
+                s"scalar-subquery#${exprId.id}",
+                newExecutedPlan), exprId)
+          } else {
+            ScalarSubquery(
+              SubqueryExec.createForScalarSubquery(
+                s"scalar-subquery#${exprId.id}",
+                executedPlan), exprId)
+          }
         } else {
           ScalarSubquery(
             SubqueryExec.createForScalarSubquery(
@@ -90,12 +101,13 @@ case class PlanRuntimeFilterFilters(sparkSession: SparkSession) extends Rule[Spa
   }
 
   private def getFilterCreationSidePlan(plan: SparkPlan): SparkPlan = {
-    assert(plan.isInstanceOf[ObjectHashAggregateExec])
-    plan.asInstanceOf[ObjectHashAggregateExec].child match {
+    plan match {
       case objectHashAggregate: ObjectHashAggregateExec =>
-        objectHashAggregate.child
+        getFilterCreationSidePlan(objectHashAggregate.child)
       case shuffleExchange: ShuffleExchangeExec =>
-        shuffleExchange.child.asInstanceOf[ObjectHashAggregateExec].child
+        getFilterCreationSidePlan(shuffleExchange.child)
+      case ProjectExec(_, inputAdapter: InputAdapter) =>
+        getFilterCreationSidePlan(inputAdapter.child)
       case other => other
     }
   }

@@ -43,24 +43,6 @@ case class PlanAdaptiveRuntimeFilterFilters(
           adaptivePlan: AdaptiveSparkPlanExec), exprId)) =>
         val filterCreationSidePlan = getFilterCreationSidePlan(adaptivePlan.executedPlan)
 
-//        var exchange = filterCreationSidePlan
-//        val canReuseExchange = conf.exchangeReuseEnabled && buildKeys.nonEmpty &&
-//          find(rootPlan) {
-//            case BroadcastHashJoinExec(_, _, _, BuildLeft, _, left, _, _) =>
-//              left.sameResult(exchange)
-//            case BroadcastHashJoinExec(_, _, _, BuildRight, _, _, right, _) =>
-//              right.sameResult(exchange)
-////            case e: ShuffleExchangeExec =>
-////              val newPlan = adaptPlan(filterCreationSidePlan, e.child)
-////              if (newPlan.isDefined && e.child.sameResult(newPlan.get)) {
-////                exchange = ShuffleExchangeExec(e.outputPartitioning, newPlan.get, e.shuffleOrigin)
-////                true
-////              } else {
-////                false
-////              }
-//            case _ => false
-//          }.isDefined
-
         val bloomFilterSubquery = if (conf.exchangeReuseEnabled && buildKeys.nonEmpty) {
           val exchange = collectFirst(rootPlan) {
 //            case BroadcastHashJoinExec(_, _, _, BuildLeft, _, left, _, _)
