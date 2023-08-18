@@ -181,7 +181,7 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
         if (left.output.exists(_.semanticEquals(filterCreationSideExp))) {
           val extracted = extract(left, AttributeSet.empty, hasHitFilter = false,
             hasHitSelectiveFilter = false, currentPlan = left, currentHint = hint)
-          if (extracted.isEmpty && conf.exchangeReuseEnabled &&
+          if (extracted.isEmpty && conf.exchangeReuseEnabled && conf.cboEnabled &&
             !canBroadcastBySize(join, conf) && notExistJoin(left) && notExistJoin(right)) {
             val hasSelectiveFilter = extract(right, AttributeSet.empty, hasHitFilter = false,
               hasHitSelectiveFilter = false, currentPlan = right, currentHint = hint).isDefined
@@ -196,7 +196,7 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
         } else if (right.output.exists(_.semanticEquals(filterCreationSideExp))) {
           val extracted = extract(right, AttributeSet.empty, hasHitFilter = false,
             hasHitSelectiveFilter = false, currentPlan = right, currentHint = hint)
-          if (extracted.isEmpty && conf.exchangeReuseEnabled &&
+          if (extracted.isEmpty && conf.exchangeReuseEnabled && conf.cboEnabled &&
             !canBroadcastBySize(join, conf) && notExistJoin(left) && notExistJoin(right)) {
             val hasSelectiveFilter = extract(left, AttributeSet.empty, hasHitFilter = false,
               hasHitSelectiveFilter = false, currentPlan = left, currentHint = hint).isDefined
@@ -357,17 +357,14 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
       plan: LogicalPlan, filterCreationSidePlan: LogicalPlan): Option[LogicalPlan] = {
     filterCreationSidePlan match {
       case _: Join if conf.exchangeReuseEnabled =>
-        val adapters = plan collect {
+        val adapters = plan collectFirst {
           case p @ Project(projectList, join: Join)
-            if join.canonicalized == filterCreationSidePlan.canonicalized =>
+            if join.canonicalized == filterCreationSidePlan.canonicalized &&
+              AttributeSet(join.output) == AttributeSet(filterCreationSidePlan.output) =>
             ProjectAdapter(projectList, p)
         }
 
-        if (adapters.nonEmpty) {
-          Some(adapters.head)
-        } else {
-          None
-        }
+        adapters
       case _: Join => None
       case other => Some(other)
     }

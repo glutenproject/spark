@@ -238,7 +238,9 @@ case class AdaptiveSparkPlanExec(
       val events = new LinkedBlockingQueue[StageMaterializationEvent]()
       val errors = new mutable.ArrayBuffer[Throwable]()
       var stagesToReplace = Seq.empty[QueryStageExec]
-      var isNotFirst = false
+      // The adaptive runtime filter reuse exchanges and the relevant query stages
+      // has not yet created. Before these query stages created, we skip the re-optimize plan.
+      var runtimeFilterStagesCreated = false
       while (!result.allChildStagesMaterialized) {
         currentPhysicalPlan = result.newPlan
         if (result.newStages.nonEmpty) {
@@ -292,7 +294,7 @@ case class AdaptiveSparkPlanExec(
           cleanUpAndThrowException(errors.toSeq, None)
         }
 
-        if (isNotFirst) {
+        if (runtimeFilterStagesCreated) {
           // Try re-optimizing and re-planning. Adopt the new plan if its cost is equal to or less
           // than that of the current plan; otherwise keep the current physical plan together with
           // the current logical plan since the physical plan's logical links point to the logical
@@ -322,8 +324,9 @@ case class AdaptiveSparkPlanExec(
         }
 
         // Now that some stages have finished, we can try creating new stages.
+        // There also try to create new stages for exchange used by adaptive runtime filters.
         result = createQueryStages(currentPhysicalPlan)
-        isNotFirst = true
+        runtimeFilterStagesCreated = true
       }
 
       // Run the final plan when there's no more unfinished stages.
