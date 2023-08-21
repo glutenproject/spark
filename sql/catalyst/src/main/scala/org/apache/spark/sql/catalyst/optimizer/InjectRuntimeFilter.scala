@@ -181,8 +181,8 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
         if (left.output.exists(_.semanticEquals(filterCreationSideExp))) {
           val extracted = extract(left, AttributeSet.empty, hasHitFilter = false,
             hasHitSelectiveFilter = false, currentPlan = left, currentHint = hint)
-          if (extracted.isEmpty && conf.exchangeReuseEnabled && conf.cboEnabled &&
-            !canBroadcastBySize(join, conf) && notExistJoin(left) && notExistJoin(right)) {
+          if (extracted.isEmpty && conf.exchangeReuseEnabled &&
+            notExistJoin(left) && notExistJoin(right)) {
             val hasSelectiveFilter = extract(right, AttributeSet.empty, hasHitFilter = false,
               hasHitSelectiveFilter = false, currentPlan = right, currentHint = hint).isDefined
             if (hasSelectiveFilter) {
@@ -196,8 +196,8 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
         } else if (right.output.exists(_.semanticEquals(filterCreationSideExp))) {
           val extracted = extract(right, AttributeSet.empty, hasHitFilter = false,
             hasHitSelectiveFilter = false, currentPlan = right, currentHint = hint)
-          if (extracted.isEmpty && conf.exchangeReuseEnabled && conf.cboEnabled &&
-            !canBroadcastBySize(join, conf) && notExistJoin(left) && notExistJoin(right)) {
+          if (extracted.isEmpty && conf.exchangeReuseEnabled &&
+            notExistJoin(left) && notExistJoin(right)) {
             val hasSelectiveFilter = extract(left, AttributeSet.empty, hasHitFilter = false,
               hasHitSelectiveFilter = false, currentPlan = left, currentHint = hint).isDefined
             if (hasSelectiveFilter) {

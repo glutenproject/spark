@@ -20,9 +20,9 @@ package org.apache.spark.sql.execution.adaptive
 import org.apache.spark.sql.catalyst.expressions.RuntimeFilterExpression
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.{RUNTIME_FILTER_EXPRESSION, SUBQUERY_WRAPPER}
-import org.apache.spark.sql.execution.{InputAdapter, ProjectExec, ScalarSubquery, SparkPlan, SubqueryAdaptiveBroadcastExec, SubqueryExec, SubqueryWrapper}
+import org.apache.spark.sql.execution.{InputAdapter, ProjectExec, ScalarSubquery, SparkPlan, SubqueryAdaptiveBroadcastExec, SubqueryBroadcastExec, SubqueryExec, SubqueryWrapper}
 import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
-import org.apache.spark.sql.execution.exchange.{Exchange, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, ShuffleExchangeExec, SubqueryBroadcastExecProxy}
 
 /**
  * A rule to insert runtime filter in order to reuse exchange.
@@ -38,26 +38,39 @@ case class PlanAdaptiveRuntimeFilterFilters(
     plan.transformAllExpressionsWithPruning(
       _.containsAllPatterns(RUNTIME_FILTER_EXPRESSION, SUBQUERY_WRAPPER)) {
       case RuntimeFilterExpression(SubqueryWrapper(
-          SubqueryAdaptiveBroadcastExec(_, _, true, _, buildKeys,
+          SubqueryAdaptiveBroadcastExec(name, index, true, _, buildKeys,
           adaptivePlan: AdaptiveSparkPlanExec), exprId)) =>
         val filterCreationSidePlan = getFilterCreationSidePlan(adaptivePlan.executedPlan)
 
         val bloomFilterSubquery = if (conf.exchangeReuseEnabled && buildKeys.nonEmpty) {
-          val exchange = collectFirst(rootPlan) {
+          val optionalExchange = collectFirst(rootPlan) {
+            case exchange: BroadcastExchangeExec
+              if exchange.child.sameResult(filterCreationSidePlan) &&
+                buildKeys.forall(k => exchange.output.exists(_.semanticEquals(k))) =>
+
+              BroadcastExchangeExec(exchange.mode, filterCreationSidePlan)
             case exchange: ShuffleExchangeExec
               if exchange.child.sameResult(filterCreationSidePlan) &&
                 buildKeys.forall(k => exchange.output.exists(_.semanticEquals(k))) =>
               ShuffleExchangeExec(
                 exchange.outputPartitioning, exchange.child, exchange.shuffleOrigin)
-          }.map(_.asInstanceOf[Exchange])
+          }
 
-          if (exchange.isDefined) {
-            exchange.get.setLogicalLink(filterCreationSidePlan.logicalLink.get)
+          optionalExchange.map { exchange =>
+            exchange.setLogicalLink(filterCreationSidePlan.logicalLink.get)
 
             val newExecutedPlan = adaptivePlan.executedPlan transformUp {
               case p @ ProjectExec(_, inputAdapter: InputAdapter)
-                if inputAdapter.child.canonicalized == exchange.get.child.canonicalized =>
-                val newInputAdapter = inputAdapter.withNewChildren(Seq(exchange.get))
+                if inputAdapter.child.canonicalized == exchange.child.canonicalized =>
+                val exchangeProxy = exchange match {
+                  case e: BroadcastExchangeExec =>
+                    val broadcastValues = SubqueryBroadcastExec(name, index, buildKeys, e)
+                    val newOutput =
+                      filterCreationSidePlan.output.filter(_.semanticEquals(buildKeys(index)))
+                    SubqueryBroadcastExecProxy(broadcastValues, newOutput)
+                  case other => other
+                }
+                val newInputAdapter = inputAdapter.withNewChildren(Seq(exchangeProxy))
                 p.withNewChildren(Seq(newInputAdapter))
             }
             val newAdaptivePlan = adaptivePlan.copy(inputPlan = newExecutedPlan)
@@ -66,12 +79,11 @@ case class PlanAdaptiveRuntimeFilterFilters(
               SubqueryExec.createForScalarSubquery(
                 s"scalar-subquery#${exprId.id}",
                 newAdaptivePlan), exprId)
-          } else {
+          }.getOrElse(
             ScalarSubquery(
               SubqueryExec.createForScalarSubquery(
                 s"scalar-subquery#${exprId.id}",
-                adaptivePlan), exprId)
-          }
+                adaptivePlan), exprId))
         } else {
           ScalarSubquery(
             SubqueryExec.createForScalarSubquery(
