@@ -383,6 +383,15 @@ object SQLConf {
       .bytesConf(ByteUnit.BYTE)
       .createWithDefaultString("10GB")
 
+  val RUNTIME_BLOOM_FILTER_STATISTICS_ADJUST_FACTOR =
+    buildConf("spark.sql.optimizer.runtime.bloomFilter.statisticsAdjustFactor")
+      .doc("When estimating the output data size of a plan, multiply the byte size with this " +
+        "factor as the estimated data size, in case the statistics is not accurate enough.")
+      .version("3.3.0")
+      .doubleConf
+      .checkValue(_ > 0, "the value of statisticsAdjustFactor must be greater than 0")
+      .createWithDefault(0.5)
+
   val RUNTIME_BLOOM_FILTER_EXPECTED_NUM_ITEMS =
     buildConf("spark.sql.optimizer.runtime.bloomFilter.expectedNumItems")
       .doc("The default number of expected items for the runtime bloomfilter")

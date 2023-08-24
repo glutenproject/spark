@@ -17,8 +17,6 @@
 
 package org.apache.spark.sql.catalyst.optimizer
 
-import scala.annotation.tailrec
-
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.BloomFilterAggregate
 import org.apache.spark.sql.catalyst.planning.ExtractEquiJoinKeys
@@ -66,14 +64,78 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     }
   }
 
+  private def hasSelectiveDynamicPruningSubquery(plan: LogicalPlan): Boolean = {
+    def estimateSelectiveFilteringRatio(buildPlan: LogicalPlan): Double = {
+      val filterKeys = buildPlan.collect {
+        case Filter(condition, child) =>
+          splitConjunctivePredicates(condition).collect {
+            case a EqualNullSafe b
+              if b.foldable && !a.nullable && child.output.exists(_.semanticEquals(a)) => a
+            case a EqualNullSafe b
+              if a.foldable && !b.nullable && child.output.exists(_.semanticEquals(b)) => b
+            case a EqualTo b
+              if b.foldable && child.output.exists(_.semanticEquals(a)) => a
+            case a EqualTo b
+              if a.foldable && child.output.exists(_.semanticEquals(b)) => b
+          }
+      }.flatten
+
+      if (filterKeys.isEmpty) {
+        0.9
+      } else {
+        filterKeys.map(_.references.toList).map {
+          case attr :: Nil =>
+            distinctCounts(attr, buildPlan)
+          case _ => None
+        }.map { distinctCount =>
+          if (distinctCount.isDefined && distinctCount.get > 0) {
+            1 / distinctCount.get.toDouble
+          } else {
+            0.1
+          }
+        }.reduce(_ * _)
+      }
+    }
+
+    plan.find {
+      case Filter(condition, partPlan) =>
+        val ratios = splitConjunctivePredicates(condition).collect {
+          case DynamicPruningSubquery(pruningKey, buildPlan, buildKeys, index, _, _) =>
+            val buildKey = buildKeys(index)
+            val filterRatio =
+              estimateFilteringRatio(pruningKey, partPlan, buildKey, buildPlan, conf)
+            val dynamicPruningRatio = estimateSelectiveFilteringRatio(buildPlan)
+            (1 - filterRatio) * dynamicPruningRatio
+        }
+
+        if (ratios.isEmpty) {
+          false
+        } else {
+          val finalRatio = ratios.reduce(_ * _)
+
+          conf.getConf(SQLConf.RUNTIME_BLOOM_FILTER_STATISTICS_ADJUST_FACTOR) *
+            finalRatio * partPlan.stats.sizeInBytes.toDouble <=
+            conf.runtimeFilterCreationSideThreshold
+        }
+      case _ => false
+    }.isDefined
+  }
+
   private def injectBloomFilter(
       filterApplicationSideExp: Expression,
       filterApplicationSidePlan: LogicalPlan,
       filterCreationSideExp: Expression,
       filterCreationSidePlan: LogicalPlan): LogicalPlan = {
     // Skip if the filter creation side is too big
-    if (filterCreationSidePlan.stats.sizeInBytes > conf.runtimeFilterCreationSideThreshold) {
-      return filterApplicationSidePlan
+    filterCreationSidePlan match {
+      case ProjectAdapter(_, child) =>
+        if (!hasSelectiveDynamicPruningSubquery(child)) {
+          return filterApplicationSidePlan
+        }
+      case _ =>
+        if (filterCreationSidePlan.stats.sizeInBytes > conf.runtimeFilterCreationSideThreshold) {
+          return filterApplicationSidePlan
+        }
     }
     val rowCount = filterCreationSidePlan.stats.rowCount
     val bloomFilterAgg =
@@ -87,7 +149,13 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     val alias = Alias(bloomFilterAgg.toAggregateExpression(), "bloomFilter")()
     val aggregate =
       ConstantFolding(ColumnPruning(Aggregate(Nil, Seq(alias), filterCreationSidePlan)))
-    val bloomFilterSubquery = ScalarSubquery(aggregate, Nil)
+    val bloomFilterSubquery = filterCreationSidePlan match {
+      case _: ProjectAdapter =>
+        // Try to reuse the results of exchange.
+        RuntimeFilterSubquery(filterApplicationSideExp, aggregate, filterCreationSideExp)
+      case _ =>
+        ScalarSubquery(aggregate, Nil)
+    }
     val filter = BloomFilterMightContain(bloomFilterSubquery,
       new XxHash64(Seq(filterApplicationSideExp)))
     Filter(filter, filterApplicationSidePlan)
@@ -121,7 +189,7 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
   private def extractSelectiveFilterOverScan(
       plan: LogicalPlan,
       filterCreationSideExp: Expression): Option[LogicalPlan] = {
-    @tailrec
+
     def extract(
         p: LogicalPlan,
         predicateReference: AttributeSet,
@@ -146,12 +214,31 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
         assert(predicateReference.isEmpty && !hasHitSelectiveFilter)
         extract(child, predicateReference, hasHitFilter, hasHitSelectiveFilter, currentPlan)
       case Filter(condition, child) if isSimpleExpression(condition) =>
-        extract(
-          child,
-          predicateReference ++ condition.references,
-          hasHitFilter = true,
-          hasHitSelectiveFilter = hasHitSelectiveFilter || isLikelySelective(condition),
-          currentPlan)
+        if (conf.runtimeFilterBloomFilterEnabled) {
+          val (dynamicPrunings, otherPredicates) =
+            splitConjunctivePredicates(condition).partition(_.isInstanceOf[DynamicPruningSubquery])
+
+          val existsLikelySelective = otherPredicates.exists(isLikelySelective)
+          val extracted = extract(
+            child,
+            predicateReference ++ condition.references,
+            hasHitFilter = true,
+            hasHitSelectiveFilter = hasHitSelectiveFilter || existsLikelySelective ||
+              dynamicPrunings.nonEmpty,
+            currentPlan)
+          if (conf.exchangeReuseEnabled && !existsLikelySelective && dynamicPrunings.nonEmpty) {
+            extracted.map(p => ProjectAdapter(p.output, p))
+          } else {
+            extracted
+          }
+        } else {
+          extract(
+            child,
+            predicateReference ++ condition.references,
+            hasHitFilter = true,
+            hasHitSelectiveFilter = hasHitSelectiveFilter || isLikelySelective(condition),
+            currentPlan)
+        }
       case ExtractEquiJoinKeys(_, _, _, _, _, left, right, _) =>
         // Runtime filters use one side of the [[Join]] to build a set of join key values and prune
         // the other side of the [[Join]]. It's also OK to use a superset of the join key values
@@ -248,21 +335,30 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     }
   }
 
-  // This checks if there is already a DPP filter, as this rule is called just after DPP.
-  @tailrec
   def hasDynamicPruningSubquery(
       left: LogicalPlan,
       right: LogicalPlan,
       leftKey: Expression,
       rightKey: Expression): Boolean = {
-    (left, right) match {
-      case (Filter(DynamicPruningSubquery(pruningKey, _, _, _, _, _), plan), _) =>
-        pruningKey.fastEquals(leftKey) || hasDynamicPruningSubquery(plan, right, leftKey, rightKey)
-      case (_, Filter(DynamicPruningSubquery(pruningKey, _, _, _, _, _), plan)) =>
-        pruningKey.fastEquals(rightKey) ||
-          hasDynamicPruningSubquery(left, plan, leftKey, rightKey)
+    left.find {
+      case Filter(condition, plan) =>
+        splitConjunctivePredicates(condition).exists {
+          case DynamicPruningSubquery(pruningKey, _, _, _, _, _) =>
+            pruningKey.fastEquals(leftKey) ||
+              hasDynamicPruningSubquery(plan, right, leftKey, rightKey)
+          case _ => false
+        }
       case _ => false
-    }
+    }.isDefined || right.find {
+      case Filter(condition, plan) =>
+        splitConjunctivePredicates(condition).exists {
+          case DynamicPruningSubquery(pruningKey, _, _, _, _, _) =>
+            pruningKey.fastEquals(rightKey) ||
+              hasDynamicPruningSubquery(left, plan, leftKey, rightKey)
+          case _ => false
+        }
+      case _ => false
+    }.isDefined
   }
 
   def hasBloomFilter(

@@ -309,6 +309,49 @@ trait PredicateHelper extends AliasHelper with Logging {
     !e.containsAnyPattern(PYTHON_UDF, SCALA_UDF, INVOKE, JSON_TO_STRUCT, LIKE_FAMLIY,
       REGEXP_EXTRACT_FAMILY, REGEXP_REPLACE)
   }
+
+  /**
+   * get the distinct counts of an attribute for a given table
+   */
+  def distinctCounts(attr: Attribute, plan: LogicalPlan): Option[BigInt] = {
+    plan.stats.attributeStats.get(attr).flatMap(_.distinctCount)
+  }
+
+  /**
+   * We estimate the filtering ratio using column statistics if they are available, otherwise we
+   * use the config value of `spark.sql.optimizer.dynamicPartitionPruning.fallbackFilterRatio`.
+   */
+  def estimateFilteringRatio(
+      partExpr: Expression,
+      partPlan: LogicalPlan,
+      otherExpr: Expression,
+      otherPlan: LogicalPlan,
+      conf: SQLConf): Double = {
+
+    // the default filtering ratio when CBO stats are missing, but there is a
+    // predicate that is likely to be selective
+    val fallbackRatio = conf.dynamicPartitionPruningFallbackFilterRatio
+    // the filtering ratio based on the type of the join condition and on the column statistics
+    (partExpr.references.toList, otherExpr.references.toList) match {
+      // filter out expressions with more than one attribute on any side of the operator
+      case (leftAttr :: Nil, rightAttr :: Nil)
+        if conf.dynamicPartitionPruningUseStats =>
+        // get the CBO stats for each attribute in the join condition
+        val partDistinctCount = distinctCounts(leftAttr, partPlan)
+        val otherDistinctCount = distinctCounts(rightAttr, otherPlan)
+        val availableStats = partDistinctCount.isDefined && partDistinctCount.get > 0 &&
+          otherDistinctCount.isDefined
+        if (!availableStats) {
+          fallbackRatio
+        } else if (partDistinctCount.get.toDouble <= otherDistinctCount.get.toDouble) {
+          // there is likely an estimation error, so we fallback
+          fallbackRatio
+        } else {
+          1 - otherDistinctCount.get.toDouble / partDistinctCount.get.toDouble
+        }
+      case _ => fallbackRatio
+    }
+  }
 }
 
 @ExpressionDescription(
