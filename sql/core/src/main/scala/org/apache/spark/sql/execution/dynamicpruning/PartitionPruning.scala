@@ -127,45 +127,14 @@ object PartitionPruning extends Rule[LogicalPlan] with PredicateHelper with Join
   /**
    * Given an estimated filtering ratio we assume the partition pruning has benefit if
    * the size in bytes of the partitioned plan after filtering is greater than the size
-   * in bytes of the plan on the other side of the join. We estimate the filtering ratio
-   * using column statistics if they are available, otherwise we use the config value of
-   * `spark.sql.optimizer.dynamicPartitionPruning.fallbackFilterRatio`.
+   * in bytes of the plan on the other side of the join.
    */
   private def pruningHasBenefit(
       partExpr: Expression,
       partPlan: LogicalPlan,
       otherExpr: Expression,
       otherPlan: LogicalPlan): Boolean = {
-
-    // get the distinct counts of an attribute for a given table
-    def distinctCounts(attr: Attribute, plan: LogicalPlan): Option[BigInt] = {
-      plan.stats.attributeStats.get(attr).flatMap(_.distinctCount)
-    }
-
-    // the default filtering ratio when CBO stats are missing, but there is a
-    // predicate that is likely to be selective
-    val fallbackRatio = conf.dynamicPartitionPruningFallbackFilterRatio
-    // the filtering ratio based on the type of the join condition and on the column statistics
-    val filterRatio = (partExpr.references.toList, otherExpr.references.toList) match {
-      // filter out expressions with more than one attribute on any side of the operator
-      case (leftAttr :: Nil, rightAttr :: Nil)
-        if conf.dynamicPartitionPruningUseStats =>
-          // get the CBO stats for each attribute in the join condition
-          val partDistinctCount = distinctCounts(leftAttr, partPlan)
-          val otherDistinctCount = distinctCounts(rightAttr, otherPlan)
-          val availableStats = partDistinctCount.isDefined && partDistinctCount.get > 0 &&
-            otherDistinctCount.isDefined
-          if (!availableStats) {
-            fallbackRatio
-          } else if (partDistinctCount.get.toDouble <= otherDistinctCount.get.toDouble) {
-            // there is likely an estimation error, so we fallback
-            fallbackRatio
-          } else {
-            1 - otherDistinctCount.get.toDouble / partDistinctCount.get.toDouble
-          }
-      case _ => fallbackRatio
-    }
-
+    val filterRatio = estimateFilteringRatio(partExpr, partPlan, otherExpr, otherPlan, conf)
     val estimatePruningSideSize = filterRatio * partPlan.stats.sizeInBytes.toFloat
     val overhead = calculatePlanOverhead(otherPlan)
     estimatePruningSideSize > overhead

@@ -48,13 +48,18 @@ case class PlanAdaptiveDynamicPruningFilters(
         val exchange = BroadcastExchangeExec(mode, adaptivePlan.executedPlan)
 
         val canReuseExchange = conf.exchangeReuseEnabled && buildKeys.nonEmpty &&
-          find(rootPlan) {
+          (find(rootPlan) {
             case BroadcastHashJoinExec(_, _, _, BuildLeft, _, left, _, _) =>
               left.sameResult(exchange)
             case BroadcastHashJoinExec(_, _, _, BuildRight, _, _, right, _) =>
               right.sameResult(exchange)
             case _ => false
-          }.isDefined
+          }.isDefined ||
+            rootPlan.context.stageCache.values.exists {
+              case BroadcastQueryStageExec(_, _, canonicalized) =>
+                canonicalized == exchange.canonicalized
+              case _ => false
+            })
 
         if (canReuseExchange) {
           exchange.setLogicalLink(adaptivePlan.executedPlan.logicalLink.get)
