@@ -31,7 +31,7 @@ THRIFTSERVER_CONFIG="--name ${runname}
 --conf spark.sql.cbo.planStats.enabled=true
 --conf spark.sql.cbo.joinReorder.enabled=true
 --conf spark.sql.optimizer.runtime.bloomFilter.applicationSideScanSizeThreshold=0
---conf spark.sql.optimizer.runtime.bloomFilter.creationSideThreshold=100MB
+--conf spark.sql.optimizer.runtime.bloomFilter.creationSideThreshold=200MB
 --conf spark.sql.optimizer.runtime.bloomFilter.enabled=true
 --conf spark.sql.optimizer.runtimeFilter.semiJoinReduction.enabled=true"
 
