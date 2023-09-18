@@ -668,6 +668,15 @@ case class XxHash64(children: Seq[Expression], seed: Long) extends HashExpressio
     copy(children = newChildren)
 }
 
+object XxHash64Key {
+  def unapply(h: XxHash64): Option[Expression] = {
+    h match {
+      case XxHash64(Seq(key), _) => Some(key)
+      case _ => None
+    }
+  }
+}
+
 object XxHash64Function extends InterpretedHashFunction {
   override protected def hashInt(i: Int, seed: Long): Long = XXH64.hashInt(i, seed)
 
