@@ -422,9 +422,17 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
       assertRewroteWithBloomFilter("select * from (select * from bf1 left anti join bf2 on " +
         "bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join bf3 on bf3.c3 = a.c1")
       assertRewroteWithBloomFilter("select * from (select * from bf1 left semi join bf2 on " +
-        "(bf1.c1 = bf2.c2 and bf2.a2 = 5)) as a join bf3 on bf3.c3 = a.c1")
+        "(bf1.c1 = bf2.c2 and bf2.a2 = 5)) as a join bf3 on bf3.c3 = a.c1", 2)
       assertRewroteWithBloomFilter("select * from (select * from bf1 left anti join bf2 on " +
         "(bf1.c1 = bf2.c2 and bf2.a2 = 5)) as a join bf3 on bf3.c3 = a.c1", 0)
+    }
+  }
+
+  test("Runtime bloom filter join: add bloom filter if the creation side exists bloom filter") {
+    withSQLConf(SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "3000",
+      SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "2000") {
+      assertRewroteWithBloomFilter("select * from bf1 join bf2 join bf3 on bf1.c1 = bf2.c2 " +
+        "and bf3.b3 = bf1.b1 where bf2.a2 = 5", 2)
     }
   }
 

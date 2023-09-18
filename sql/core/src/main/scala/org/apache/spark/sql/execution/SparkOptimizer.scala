@@ -52,12 +52,10 @@ class SparkOptimizer(
     Batch("Optimize Metadata Only Query", Once, OptimizeMetadataOnlyQuery(catalog)) :+
     Batch("PartitionPruning", Once,
       PartitionPruning) :+
-    Batch("Pushdown Filters from PartitionPruning", fixedPoint,
-      PushDownPredicates) :+
     Batch("InjectRuntimeFilter", FixedPoint(1),
       InjectRuntimeFilter,
       RewritePredicateSubquery) :+
-    Batch("Pushdown Filters from RuntimeFilter", fixedPoint,
+    Batch("Pushdown Filters from PartitionPruning", fixedPoint,
       PushDownPredicates) :+
     Batch("Cleanup filters that cannot be pushed down", Once,
       CleanupDynamicPruningFilters,
