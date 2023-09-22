@@ -30,7 +30,7 @@ THRIFTSERVER_CONFIG="--name ${runname}
 --conf spark.sql.optimizer.runtime.bloomFilter.applicationSideScanSizeThreshold=0
 --conf spark.sql.optimizer.runtime.bloomFilter.enabled=true
 --conf spark.sql.optimizer.runtimeFilter.semiJoinReduction.enabled=true
---conf spark.sql.optimizer.runtime.bloomFilter.statisticsAdjustFactor=0.01"
+--conf spark.sql.optimizer.runtime.bloomFilter.statisticsAdjustFactor=0.05"
 
 $THRIFTSERVER_START_CMD $THRIFTSERVER_CONFIG
 
