@@ -285,17 +285,10 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
   def getNumBloomFilters(plan: LogicalPlan): Integer = {
     val numBloomFilterAggs = plan.collect {
       case Filter(condition, _) => condition.collect {
-        case subquery: org.apache.spark.sql.catalyst.expressions.ScalarSubquery
-        => subquery.plan.collect {
-          case Aggregate(_, aggregateExpressions, _) =>
-            aggregateExpressions.map {
-              case Alias(AggregateExpression(bfAgg : BloomFilterAggregate, _, _, _, _),
-              _) =>
-                assert(bfAgg.estimatedNumItemsExpression.isInstanceOf[Literal])
-                assert(bfAgg.numBitsExpression.isInstanceOf[Literal])
-                1
-            }.sum
-        }.sum
+        case subquery: org.apache.spark.sql.catalyst.expressions.ScalarSubquery =>
+          collectAndSumBloomFilters(subquery)
+        case rtSubquery: org.apache.spark.sql.catalyst.expressions.RuntimeFilterSubquery =>
+          collectAndSumBloomFilters(rtSubquery)
       }.sum
     }.sum
     val numMightContains = plan.collect {
@@ -305,6 +298,19 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
     }.sum
     assert(numBloomFilterAggs == numMightContains)
     numMightContains
+  }
+
+  private def collectAndSumBloomFilters(
+      subquery: org.apache.spark.sql.catalyst.expressions.SubqueryExpression): Int = {
+    subquery.plan.collect {
+      case Aggregate(_, aggregateExpressions, _) =>
+        aggregateExpressions.map {
+          case Alias(AggregateExpression(bfAgg : BloomFilterAggregate, _, _, _, _), _) =>
+            assert(bfAgg.estimatedNumItemsExpression.isInstanceOf[Literal])
+            assert(bfAgg.numBitsExpression.isInstanceOf[Literal])
+            1
+        }.sum
+    }.sum
   }
 
   def columnPruningTakesEffect(plan: LogicalPlan): Boolean = {
@@ -520,6 +526,14 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
       SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "2000") {
       assertRewroteWithBloomFilter("select * from bf5part join bf2 on " +
         "bf5part.c5 = bf2.c2 and bf5part.f5 = bf2.f2 where bf2.a2 = 62")
+    }
+  }
+
+  test("Runtime bloom filter join: add bloom filter if the creation side exists dpp filter") {
+    withSQLConf(SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "3000",
+      SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "2000") {
+      assertRewroteWithBloomFilter("select * from bf5part join bf2 join bf1 on " +
+        "bf5part.f5 = bf2.f2 and bf1.c1 = bf5part.c5 where bf2.a2 = 62")
     }
   }
 
