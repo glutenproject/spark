@@ -367,7 +367,7 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
     withSQLConf(SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "3000",
       SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "2000") {
       assertRewroteSemiJoin("select * from bf1 join bf2 join bf3 join bf4 on " +
-        "bf1.c1 = bf2.c2 and bf2.c2 = bf3.c3 and bf3.c3 = bf4.c4 where bf1.a1 = 5")
+        "bf1.c1 = bf2.c2 and bf2.c2 = bf3.c3 and bf3.c3 = bf4.c4 where bf1.a1 = 5", 2)
     }
   }
 
@@ -417,14 +417,50 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
 
     withSQLConf(SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "3000",
       SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "1200") {
+      assertRewroteWithBloomFilter("select * from bf1 join bf2 join bf3 on bf1.c1 = bf2.c2 " +
+        "and bf3.c3 = bf1.c1 where bf1.a1 = 5", 2)
+      assertRewroteWithBloomFilter("select * from (select * from bf1 join bf2 on " +
+        "bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join bf3 on bf3.c3 = a.c1", 2)
+      assertRewroteWithBloomFilter("select * from (select * from bf1 left semi join bf2 on " +
+        "(bf1.c1 = bf2.c2 and bf1.a1 = 5)) as a join bf3 on bf3.c3 = a.c1", 2)
       assertRewroteWithBloomFilter("select * from (select * from bf1 left semi join bf2 on " +
         "bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join bf3 on bf3.c3 = a.c1", 2)
       assertRewroteWithBloomFilter("select * from (select * from bf1 left anti join bf2 on " +
+        "(bf1.c1 = bf2.c2 and bf1.a1 = 5)) as a join bf3 on bf3.c3 = a.c1", 0)
+      assertRewroteWithBloomFilter("select * from (select * from bf1 left anti join bf2 on " +
         "bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join bf3 on bf3.c3 = a.c1")
+      assertRewroteWithBloomFilter("select * from bf1 left outer join bf2 join bf3 on " +
+        "bf1.c1 = bf2.c2 and bf3.c3 = bf1.c1 where bf1.a1 = 5", 2)
+      assertRewroteWithBloomFilter("select * from (select * from bf1 left join bf2 on " +
+        "bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join bf3 on bf3.c3 = a.c1", 2)
+      assertRewroteWithBloomFilter("select * from bf1 right outer join bf2 join bf3 on " +
+        "bf1.c1 = bf2.c2 and bf3.c3 = bf1.c1 where bf1.a1 = 5", 2)
+      assertRewroteWithBloomFilter("select * from (select * from bf1 right join bf2 on " +
+        "bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join bf3 on bf3.c3 = a.c1", 2)
+      assertRewroteWithBloomFilter("select * from (select * from bf1 full outer join bf2 on " +
+        "bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join bf3 on bf3.c3 = a.c1", 2)
+
+      // Can't pass equivalent creation side expressions due to runtime filters already exists.
+      assertRewroteWithBloomFilter("select * from bf1 join bf2 join bf3 on bf1.c1 = bf2.c2 " +
+        "and bf3.c3 = bf1.c1 where bf2.a2 = 5")
+      assertRewroteWithBloomFilter("select * from bf1 left outer join bf2 join bf3 on " +
+        "bf1.c1 = bf2.c2 and bf3.c3 = bf1.c1 where bf2.a2 = 5")
+      assertRewroteWithBloomFilter("select * from bf1 right outer join bf2 join bf3 on " +
+        "bf1.c1 = bf2.c2 and bf3.c3 = bf1.c1 where bf2.a2 = 5")
+
+      // Runtime Filter supports passing equivalent creation side expressions.
+      assertRewroteWithBloomFilter("select * from (select * from bf1 join bf2 on " +
+        "bf1.c1 = bf2.c2 where bf2.a2 = 5) as a join bf3 on bf3.c3 = a.c1", 2)
       assertRewroteWithBloomFilter("select * from (select * from bf1 left semi join bf2 on " +
         "(bf1.c1 = bf2.c2 and bf2.a2 = 5)) as a join bf3 on bf3.c3 = a.c1", 2)
       assertRewroteWithBloomFilter("select * from (select * from bf1 left anti join bf2 on " +
-        "(bf1.c1 = bf2.c2 and bf2.a2 = 5)) as a join bf3 on bf3.c3 = a.c1", 0)
+        "(bf1.c1 = bf2.c2 and bf2.a2 = 5)) as a join bf3 on bf3.c3 = a.c1")
+      assertRewroteWithBloomFilter("select * from (select * from bf1 left join bf2 on " +
+        "bf1.c1 = bf2.c2 where bf2.a2 = 5) as a join bf3 on bf3.c3 = a.c1", 2)
+      assertRewroteWithBloomFilter("select * from (select * from bf1 right join bf2 on " +
+        "bf1.c1 = bf2.c2 where bf2.a2 = 5) as a join bf3 on bf3.c3 = a.c1", 2)
+      assertRewroteWithBloomFilter("select * from (select * from bf1 full outer join bf2 on " +
+        "bf1.c1 = bf2.c2 where bf2.a2 = 5) as a join bf3 on bf3.c3 = a.c1", 2)
     }
   }
 
