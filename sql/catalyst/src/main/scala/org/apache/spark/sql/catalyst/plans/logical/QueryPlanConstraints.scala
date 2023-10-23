@@ -75,7 +75,7 @@ trait ConstraintHelper {
         inferredConstraints ++= replaceConstraints(predicates - eq, l, r)
       case _ => // No inference
     }
-    inferredConstraints -- constraints
+    inferredConstraints.filterNot(hasComplexInOrCorrelatedExistsSubquery) -- constraints
   }
 
   private def replaceConstraints(
@@ -84,6 +84,19 @@ trait ConstraintHelper {
       destination: Expression): ExpressionSet = constraints.map(_ transform {
     case e: Expression if e.semanticEquals(source) => destination
   })
+
+  private def hasComplexOperator(plan: LogicalPlan): Boolean = plan.exists {
+    case _: Join | _: Aggregate | _: Window =>
+      true
+    case _ =>
+      false
+  }
+
+  private def hasComplexInOrCorrelatedExistsSubquery(e: Expression): Boolean = e.exists {
+    case lq: ListQuery => hasComplexOperator(lq.plan)
+    case ex: Exists => hasComplexOperator(ex.plan)
+    case _ => false
+  }
 
   /**
    * Infers a set of `isNotNull` constraints from null intolerant expressions as well as
