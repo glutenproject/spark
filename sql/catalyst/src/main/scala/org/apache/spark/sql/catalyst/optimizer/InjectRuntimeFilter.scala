@@ -458,7 +458,8 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
   }
 
   private def findBloomFilterWithExp(plan: LogicalPlan, key: Expression): Boolean = {
-    plan.exists {
+    // Ensure that sibling nodes under the same Join do not have runtime filter
+    !plan.exists(_.isInstanceOf[Join]) && plan.exists {
       case Filter(condition, _) =>
         splitConjunctivePredicates(condition).exists {
           case BloomFilterMightContain(_, XxHash64(Seq(valueExpression), _))
