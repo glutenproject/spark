@@ -291,15 +291,6 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     }
   }
 
-  def hasRuntimeFilter(left: LogicalPlan, right: LogicalPlan, leftKey: Expression,
-      rightKey: Expression): Boolean = {
-    if (conf.runtimeFilterBloomFilterEnabled) {
-      hasBloomFilter(left, right, leftKey, rightKey)
-    } else {
-      hasInSubquery(left, right, leftKey, rightKey)
-    }
-  }
-
   // This checks if there is already a DPP filter, as this rule is called just after DPP.
   @tailrec
   def hasDynamicPruningSubquery(
@@ -317,12 +308,12 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     }
   }
 
-  def hasBloomFilter(
-      left: LogicalPlan,
-      right: LogicalPlan,
-      leftKey: Expression,
-      rightKey: Expression): Boolean = {
-    findBloomFilterWithExp(left, leftKey) || findBloomFilterWithExp(right, rightKey)
+  def hasRuntimeFilter(plan: LogicalPlan, key: Expression): Boolean = {
+    if (conf.runtimeFilterBloomFilterEnabled) {
+      findBloomFilterWithExp(plan, key)
+    } else {
+      hasInSubqueryWithExp(plan, key)
+    }
   }
 
   private def findBloomFilterWithExp(plan: LogicalPlan, key: Expression): Boolean = {
@@ -337,15 +328,11 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     }
   }
 
-  def hasInSubquery(left: LogicalPlan, right: LogicalPlan, leftKey: Expression,
-      rightKey: Expression): Boolean = {
-    (left, right) match {
-      case (Filter(InSubquery(Seq(key),
-      ListQuery(Aggregate(Seq(Alias(_, _)), Seq(Alias(_, _)), _), _, _, _, _)), _), _) =>
-        key.fastEquals(leftKey) || key.fastEquals(new Murmur3Hash(Seq(leftKey)))
-      case (_, Filter(InSubquery(Seq(key),
-      ListQuery(Aggregate(Seq(Alias(_, _)), Seq(Alias(_, _)), _), _, _, _, _)), _)) =>
-        key.fastEquals(rightKey) || key.fastEquals(new Murmur3Hash(Seq(rightKey)))
+  def hasInSubqueryWithExp(plan: LogicalPlan, key: Expression): Boolean = {
+    plan match {
+      case Filter(InSubquery(Seq(expr),
+      ListQuery(Aggregate(Seq(Alias(_, _)), Seq(Alias(_, _)), _), _, _, _, _)), _) =>
+        expr.fastEquals(key) || expr.fastEquals(new Murmur3Hash(Seq(key)))
       case _ => false
     }
   }
@@ -360,28 +347,33 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
         (leftKeys, rightKeys).zipped.foreach((l, r) => {
           // Check if:
           // 1. There is already a DPP filter on the key
-          // 2. There is already a runtime filter (Bloom filter or IN subquery) on the key
-          // 3. The keys are simple cheap expressions
+          // 2. The keys are simple cheap expressions
           if (filterCounter < numFilterThreshold &&
             !hasDynamicPruningSubquery(left, right, l, r) &&
-            !hasRuntimeFilter(newLeft, newRight, l, r) &&
             isSimpleExpression(l) && isSimpleExpression(r)) {
             val oldLeft = newLeft
             val oldRight = newRight
-            // Check if the current join is a shuffle join or a broadcast join that
-            // has a shuffle below it
+            // Check if:
+            // 1. The current join type supports prune the left side with runtime filter
+            // 2. The current join is a shuffle join or a broadcast join that
+            //    has a shuffle below it
+            // 3. There is already a runtime filter (Bloom filter or IN subquery) on the left key
             val hasShuffle = isProbablyShuffleJoin(left, right, hint)
-            if (canPruneLeft(joinType) && (hasShuffle || probablyHasShuffle(left))) {
+            if (canPruneLeft(joinType) && (hasShuffle || probablyHasShuffle(left)) &&
+              !hasRuntimeFilter(newLeft, l)) {
               extractBeneficialFilterCreatePlan(left, right, l, r).foreach {
                 case (filterCreationSideExp, filterCreationSidePlan) =>
                   newLeft = injectFilter(l, newLeft, filterCreationSideExp, filterCreationSidePlan)
               }
             }
             // Did we actually inject on the left? If not, try on the right
-            // Check if the current join is a shuffle join or a broadcast join that
-            // has a shuffle below it
+            // Check if:
+            // 1. The current join type supports prune the right side with runtime filter
+            // 2. The current join is a shuffle join or a broadcast join that
+            //    has a shuffle below it
+            // 3. There is already a runtime filter (Bloom filter or IN subquery) on the right key
             if (newLeft.fastEquals(oldLeft) && canPruneRight(joinType) &&
-              (hasShuffle || probablyHasShuffle(right))) {
+              (hasShuffle || probablyHasShuffle(right)) && !hasRuntimeFilter(newRight, r)) {
               extractBeneficialFilterCreatePlan(right, left, r, l).foreach {
                 case (filterCreationSideExp, filterCreationSidePlan) =>
                   newRight =
