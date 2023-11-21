@@ -88,7 +88,12 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     val alias = Alias(bloomFilterAgg.toAggregateExpression(), "bloomFilter")()
     val aggregate =
       ConstantFolding(ColumnPruning(Aggregate(Nil, Seq(alias), filterCreationSidePlan)))
-    val bloomFilterSubquery = ScalarSubquery(aggregate, Nil)
+    val bloomFilterSubquery = filterCreationSidePlan match {
+      case _: ProjectAdapter =>
+        RuntimeFilterSubquery(filterApplicationSideExp, aggregate, filterCreationSideExp)
+      case _ =>
+        ScalarSubquery(aggregate, Nil)
+    }
     val filter = BloomFilterMightContain(bloomFilterSubquery,
       new XxHash64(Seq(filterApplicationSideExp)))
     Filter(filter, filterApplicationSidePlan)
@@ -113,6 +118,12 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     Filter(filter, filterApplicationSidePlan)
   }
 
+  private def notExistJoin(plan: LogicalPlan): Boolean = {
+    plan.collect {
+      case join: Join => join
+    }.isEmpty
+  }
+
   /**
    * Extracts a sub-plan which is a simple filter over scan from the input plan. The simple
    * filter should be selective and the filter condition (including expressions in the child
@@ -121,14 +132,16 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
    */
   private def extractSelectiveFilterOverScan(
       plan: LogicalPlan,
-      filterCreationSideExp: Expression): Option[LogicalPlan] = {
-    @tailrec
+      filterCreationSideExp: Expression,
+      hint: JoinHint): Option[LogicalPlan] = {
+
     def extract(
         p: LogicalPlan,
         predicateReference: AttributeSet,
         hasHitFilter: Boolean,
         hasHitSelectiveFilter: Boolean,
-        currentPlan: LogicalPlan): Option[LogicalPlan] = p match {
+        currentPlan: LogicalPlan,
+        currentHint: JoinHint): Option[LogicalPlan] = p match {
       case Project(projectList, child) if hasHitFilter =>
         // We need to make sure all expressions referenced by filter predicates are simple
         // expressions.
@@ -139,30 +152,62 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
             referencedExprs.map(_.references).foldLeft(AttributeSet.empty)(_ ++ _),
             hasHitFilter,
             hasHitSelectiveFilter,
-            currentPlan)
+            currentPlan,
+            currentHint)
         } else {
           None
         }
       case Project(_, child) =>
         assert(predicateReference.isEmpty && !hasHitSelectiveFilter)
-        extract(child, predicateReference, hasHitFilter, hasHitSelectiveFilter, currentPlan)
+        extract(
+          child,
+          predicateReference,
+          hasHitFilter,
+          hasHitSelectiveFilter,
+          currentPlan,
+          currentHint)
       case Filter(condition, child) if isSimpleExpression(condition) =>
         extract(
           child,
           predicateReference ++ condition.references,
           hasHitFilter = true,
           hasHitSelectiveFilter = hasHitSelectiveFilter || isLikelySelective(condition),
-          currentPlan)
-      case ExtractEquiJoinKeys(_, _, _, _, _, left, right, _) =>
+          currentPlan,
+          currentHint)
+      case join @ ExtractEquiJoinKeys(_, _, _, _, _, left, right, hint) =>
         // Runtime filters use one side of the [[Join]] to build a set of join key values and prune
         // the other side of the [[Join]]. It's also OK to use a superset of the join key values
         // (ignore null values) to do the pruning.
         if (left.output.exists(_.semanticEquals(filterCreationSideExp))) {
-          extract(left, AttributeSet.empty,
-            hasHitFilter = false, hasHitSelectiveFilter = false, currentPlan = left)
+          val extracted = extract(left, AttributeSet.empty, hasHitFilter = false,
+            hasHitSelectiveFilter = false, currentPlan = left, currentHint = hint)
+          if (extracted.isEmpty && conf.exchangeReuseEnabled &&
+            notExistJoin(left) && notExistJoin(right)) {
+            val hasSelectiveFilter = extract(right, AttributeSet.empty, hasHitFilter = false,
+              hasHitSelectiveFilter = false, currentPlan = right, currentHint = hint).isDefined
+            if (hasSelectiveFilter) {
+              Some(join)
+            } else {
+              None
+            }
+          } else {
+            extracted
+          }
         } else if (right.output.exists(_.semanticEquals(filterCreationSideExp))) {
-          extract(right, AttributeSet.empty,
-            hasHitFilter = false, hasHitSelectiveFilter = false, currentPlan = right)
+          val extracted = extract(right, AttributeSet.empty, hasHitFilter = false,
+            hasHitSelectiveFilter = false, currentPlan = right, currentHint = hint)
+          if (extracted.isEmpty && conf.exchangeReuseEnabled &&
+            notExistJoin(left) && notExistJoin(right)) {
+            val hasSelectiveFilter = extract(left, AttributeSet.empty, hasHitFilter = false,
+              hasHitSelectiveFilter = false, currentPlan = left, currentHint = hint).isDefined
+            if (hasSelectiveFilter) {
+              Some(join)
+            } else {
+              None
+            }
+          } else {
+            extracted
+          }
         } else {
           None
         }
@@ -172,8 +217,8 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     }
 
     if (!plan.isStreaming) {
-      extract(plan, AttributeSet.empty,
-        hasHitFilter = false, hasHitSelectiveFilter = false, currentPlan = plan)
+      extract(plan, AttributeSet.empty, hasHitFilter = false, hasHitSelectiveFilter = false,
+        currentPlan = plan, currentHint = hint)
     } else {
       None
     }
@@ -239,7 +284,7 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     if (findExpressionAndTrackLineageDown(
       filterApplicationSideExp, filterApplicationSide).isDefined &&
       satisfyByteSizeRequirement(filterApplicationSide)) {
-      extractSelectiveFilterOverScan(filterCreationSide, filterCreationSideExp)
+      extractSelectiveFilterOverScan(filterCreationSide, filterCreationSideExp, hint)
     } else {
       None
     }
@@ -304,6 +349,23 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     }
   }
 
+  private def findSimilarJoin(
+      plan: LogicalPlan, filterCreationSidePlan: LogicalPlan): Option[LogicalPlan] = {
+    filterCreationSidePlan match {
+      case _: Join if conf.exchangeReuseEnabled =>
+        val adapters = plan collectFirst {
+          case p @ Project(projectList, join: Join)
+            if join.canonicalized == filterCreationSidePlan.canonicalized &&
+              AttributeSet(join.output) == AttributeSet(filterCreationSidePlan.output) =>
+            ProjectAdapter(projectList, p)
+        }
+
+        adapters
+      case _: Join => None
+      case other => Some(other)
+    }
+  }
+
   private def tryInjectRuntimeFilter(plan: LogicalPlan): LogicalPlan = {
     var filterCounter = 0
     val numFilterThreshold = conf.getConf(SQLConf.RUNTIME_FILTER_NUMBER_THRESHOLD)
@@ -328,7 +390,9 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
             if (canPruneLeft(joinType) && (hasShuffle || probablyHasShuffle(left))) {
               extractBeneficialFilterCreatePlan(left, right, l, r).foreach {
                 filterCreationSidePlan =>
-                  newLeft = injectFilter(l, newLeft, r, filterCreationSidePlan)
+                  findSimilarJoin(plan, filterCreationSidePlan).foreach { p =>
+                    newLeft = injectFilter(l, newLeft, r, p)
+                  }
               }
             }
             // Did we actually inject on the left? If not, try on the right
@@ -338,7 +402,9 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
               (hasShuffle || probablyHasShuffle(right))) {
               extractBeneficialFilterCreatePlan(right, left, r, l).foreach {
                 filterCreationSidePlan =>
-                  newRight = injectFilter(r, newRight, l, filterCreationSidePlan)
+                  findSimilarJoin(plan, filterCreationSidePlan).foreach { p =>
+                    newRight = injectFilter(r, newRight, l, p)
+                  }
               }
             }
             if (!newLeft.fastEquals(oldLeft) || !newRight.fastEquals(oldRight)) {

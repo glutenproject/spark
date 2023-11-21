@@ -130,6 +130,7 @@ case class AdaptiveSparkPlanExec(
   // optimizations should be stage-independent.
   @transient private val queryStageOptimizerRules: Seq[Rule[SparkPlan]] = Seq(
     PlanAdaptiveDynamicPruningFilters(this),
+    PlanAdaptiveRuntimeFilterFilters(this),
     ReuseAdaptiveSubquery(context.subqueryCache),
     OptimizeSkewInRebalancePartitions,
     CoalesceShufflePartitions(context.session),
@@ -237,6 +238,9 @@ case class AdaptiveSparkPlanExec(
       val events = new LinkedBlockingQueue[StageMaterializationEvent]()
       val errors = new mutable.ArrayBuffer[Throwable]()
       var stagesToReplace = Seq.empty[QueryStageExec]
+      // The adaptive runtime filter reuse exchanges and the relevant query stages
+      // has not yet created. Before these query stages created, we skip the re-optimize plan.
+      var runtimeFilterStagesCreated = false
       while (!result.allChildStagesMaterialized) {
         currentPhysicalPlan = result.newPlan
         if (result.newStages.nonEmpty) {
@@ -290,34 +294,39 @@ case class AdaptiveSparkPlanExec(
           cleanUpAndThrowException(errors.toSeq, None)
         }
 
-        // Try re-optimizing and re-planning. Adopt the new plan if its cost is equal to or less
-        // than that of the current plan; otherwise keep the current physical plan together with
-        // the current logical plan since the physical plan's logical links point to the logical
-        // plan it has originated from.
-        // Meanwhile, we keep a list of the query stages that have been created since last plan
-        // update, which stands for the "semantic gap" between the current logical and physical
-        // plans. And each time before re-planning, we replace the corresponding nodes in the
-        // current logical plan with logical query stages to make it semantically in sync with
-        // the current physical plan. Once a new plan is adopted and both logical and physical
-        // plans are updated, we can clear the query stage list because at this point the two plans
-        // are semantically and physically in sync again.
-        val logicalPlan = replaceWithQueryStagesInLogicalPlan(currentLogicalPlan, stagesToReplace)
-        val afterReOptimize = reOptimize(logicalPlan)
-        if (afterReOptimize.isDefined) {
-          val (newPhysicalPlan, newLogicalPlan) = afterReOptimize.get
-          val origCost = costEvaluator.evaluateCost(currentPhysicalPlan)
-          val newCost = costEvaluator.evaluateCost(newPhysicalPlan)
-          if (newCost < origCost ||
-            (newCost == origCost && currentPhysicalPlan != newPhysicalPlan)) {
-            logOnLevel(s"Plan changed from $currentPhysicalPlan to $newPhysicalPlan")
-            cleanUpTempTags(newPhysicalPlan)
-            currentPhysicalPlan = newPhysicalPlan
-            currentLogicalPlan = newLogicalPlan
-            stagesToReplace = Seq.empty[QueryStageExec]
+        if (runtimeFilterStagesCreated) {
+          // Try re-optimizing and re-planning. Adopt the new plan if its cost is equal to or less
+          // than that of the current plan; otherwise keep the current physical plan together with
+          // the current logical plan since the physical plan's logical links point to the logical
+          // plan it has originated from.
+          // Meanwhile, we keep a list of the query stages that have been created since last plan
+          // update, which stands for the "semantic gap" between the current logical and physical
+          // plans. And each time before re-planning, we replace the corresponding nodes in the
+          // current logical plan with logical query stages to make it semantically in sync with
+          // the current physical plan. Once a new plan is adopted and both logical and physical
+          // plans are updated, we can clear the query stage list because at this point the two
+          // plans are semantically and physically in sync again.
+          val logicalPlan = replaceWithQueryStagesInLogicalPlan(currentLogicalPlan, stagesToReplace)
+          val afterReOptimize = reOptimize(logicalPlan)
+          if (afterReOptimize.isDefined) {
+            val (newPhysicalPlan, newLogicalPlan) = afterReOptimize.get
+            val origCost = costEvaluator.evaluateCost(currentPhysicalPlan)
+            val newCost = costEvaluator.evaluateCost(newPhysicalPlan)
+            if (newCost < origCost ||
+              (newCost == origCost && currentPhysicalPlan != newPhysicalPlan)) {
+              logOnLevel(s"Plan changed from $currentPhysicalPlan to $newPhysicalPlan")
+              cleanUpTempTags(newPhysicalPlan)
+              currentPhysicalPlan = newPhysicalPlan
+              currentLogicalPlan = newLogicalPlan
+              stagesToReplace = Seq.empty[QueryStageExec]
+            }
           }
         }
+
         // Now that some stages have finished, we can try creating new stages.
+        // There also try to create new stages for exchange used by adaptive runtime filters.
         result = createQueryStages(currentPhysicalPlan)
+        runtimeFilterStagesCreated = true
       }
 
       // Run the final plan when there's no more unfinished stages.
