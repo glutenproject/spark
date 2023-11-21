@@ -95,6 +95,7 @@ abstract class Optimizer(catalogManager: CatalogManager)
         OptimizeWindowFunctions,
         CollapseWindow,
         CombineFilters,
+        EliminateJoinByCombineAggregate,
         EliminateLimits,
         CombineUnions,
         // Constant folding and strength reduction

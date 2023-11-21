@@ -3787,6 +3787,14 @@ object SQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val ELIMINATE_JOIN_BY_COMBINE_AGGREGATE_ENABLED =
+    buildConf("spark.sql.optimizer.eliminateJoinByCombineAggregate.enabled")
+      .doc("When true, we attempt to eliminate join by combine aggregates " +
+        "to reduce the scan times and avoid shuffle.")
+      .version("3.5.0")
+      .booleanConf
+      .createWithDefault(true)
+
   /**
    * Holds information about keys that have been deprecated.
    *
@@ -4551,6 +4559,9 @@ class SQLConf extends Serializable with Logging {
 
   def histogramNumericPropagateInputType: Boolean =
     getConf(SQLConf.HISTOGRAM_NUMERIC_PROPAGATE_INPUT_TYPE)
+
+  def eliminateJoinByCombineAggregateEnabled: Boolean =
+    getConf(SQLConf.ELIMINATE_JOIN_BY_COMBINE_AGGREGATE_ENABLED)
 
   /** ********************** SQLConf functionality methods ************ */
 
