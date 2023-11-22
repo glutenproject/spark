@@ -246,7 +246,7 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
         extract(child, predicateReference, hasHitFilter, hasHitSelectiveFilter, currentPlan,
           currentFilterCreationSideExp)
       case Filter(condition, child) if isSimpleExpression(condition) =>
-        if (conf.runtimeFilterBloomFilterEnabled) {
+        if (conf.runtimeFilterBloomFilterEnabled && conf.adaptiveExecutionEnabled) {
           val (filteringSubquerys, otherPredicates) =
             splitConjunctivePredicates(condition).partition {
               case _: DynamicPruningSubquery => true
@@ -559,10 +559,14 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
       // Try to inject runtime filter based on simple and selective predicates or
       // dynamic pruning subquery.
       val (newPlan, currentFilterCount) = tryInjectRuntimeFilter(plan)
-      // Push down the predicates of runtime filter.
-      val pushedPlan = pushDownPredicates(newPlan)
-      // Try to inject runtime filter based on bloom filter subquery.
-      val (finalPlan, _) = tryInjectRuntimeFilter(pushedPlan, currentFilterCount)
+      val finalPlan = if (conf.adaptiveExecutionEnabled) {
+        // Push down the predicates of runtime filter.
+        val pushedPlan = pushDownPredicates(newPlan)
+        // Try to inject runtime filter based on bloom filter subquery.
+        tryInjectRuntimeFilter(pushedPlan, currentFilterCount)._1
+      } else {
+        newPlan
+      }
       if (conf.runtimeFilterSemiJoinReductionEnabled && !plan.fastEquals(finalPlan)) {
         RewritePredicateSubquery(finalPlan)
       } else {
