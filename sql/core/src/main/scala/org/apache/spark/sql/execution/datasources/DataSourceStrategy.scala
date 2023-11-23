@@ -486,7 +486,9 @@ object DataSourceStrategy
       ExpressionSet(Nil)
     } else {
       val partitionSet = AttributeSet(partitionColumns)
-      val predicates = ExpressionSet(normalizedFilters
+      val runtimeFiltersExcluded =
+        normalizedFilters.filterNot(_.isInstanceOf[BloomFilterMightContain])
+      val predicates = ExpressionSet(runtimeFiltersExcluded
         .flatMap(extractPredicatesWithinOutputSet(_, partitionSet)))
       logInfo(s"Pruning directories with: ${predicates.mkString(",")}")
       predicates
