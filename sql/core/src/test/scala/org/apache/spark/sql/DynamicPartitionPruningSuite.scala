@@ -19,7 +19,7 @@ package org.apache.spark.sql
 
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.sql.catalyst.expressions.{BloomFilterMightContain, DynamicPruningExpression, Expression, PredicateHelper}
+import org.apache.spark.sql.catalyst.expressions.{DynamicPruningExpression, Expression}
 import org.apache.spark.sql.catalyst.expressions.CodegenObjectFactoryMode._
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
 import org.apache.spark.sql.connector.catalog.InMemoryTableCatalog
@@ -40,8 +40,7 @@ abstract class DynamicPartitionPruningSuiteBase
     extends QueryTest
     with SQLTestUtils
     with GivenWhenThen
-    with AdaptiveSparkPlanHelper
-    with PredicateHelper {
+    with AdaptiveSparkPlanHelper {
 
   val tableFormat: String = "parquet"
 
@@ -262,15 +261,6 @@ abstract class DynamicPartitionPruningSuiteBase
       }
       case s: BatchScanExec => s.runtimeFilters.collect {
         case d: DynamicPruningExpression => d.child
-      }
-      case _ => Nil
-    }
-  }
-
-  protected def collectRuntimeFilterExpressions(plan: SparkPlan): Seq[Expression] = {
-    flatMap(plan) {
-      case FilterExec(condition, _) => splitConjunctivePredicates(condition).collect {
-        case bf: BloomFilterMightContain => bf
       }
       case _ => Nil
     }
@@ -1737,32 +1727,6 @@ class DynamicPartitionPruningV1SuiteAEOn extends DynamicPartitionPruningV1Suite
 
       checkPartitionPruningPredicate(df, true, false)
       checkAnswer(df, Row(1000, 1) :: Row(1010, 2) :: Row(1020, 2) :: Nil)
-    }
-  }
-
-  test("Can't push down runtime filter as dynamic partition pruning") {
-    withSQLConf(SQLConf.DYNAMIC_PARTITION_PRUNING_ENABLED.key -> "true",
-      SQLConf.DYNAMIC_PARTITION_PRUNING_REUSE_BROADCAST_ONLY.key -> "false",
-      SQLConf.EXCHANGE_REUSE_ENABLED.key -> "false",
-      SQLConf.RUNTIME_BLOOM_FILTER_ENABLED.key -> "true",
-      SQLConf.RUNTIME_BLOOM_FILTER_APPLICATION_SIDE_SCAN_SIZE_THRESHOLD.key -> "2500",
-      SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "2000") {
-      val df = sql(
-        """
-          |SELECT f.date_id, f.store_id, f.product_id, f.units_sold FROM fact_np f
-          |JOIN code_stats s
-          |ON f.store_id = s.store_id WHERE f.date_id <= 1030
-        """.stripMargin)
-
-      val bloomFilterExprs = collectRuntimeFilterExpressions(df.queryExecution.executedPlan)
-      assert(bloomFilterExprs.size == 1)
-      checkPartitionPruningPredicate(df, false, false)
-      checkAnswer(df,
-        Row(1000, 1, 1, 10) ::
-        Row(1010, 2, 1, 10) ::
-        Row(1020, 2, 1, 10) ::
-        Row(1030, 3, 2, 10) :: Nil
-      )
     }
   }
 }
