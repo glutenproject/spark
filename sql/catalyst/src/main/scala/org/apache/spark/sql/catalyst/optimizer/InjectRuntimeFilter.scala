@@ -138,7 +138,8 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
         val filterRatio =
           estimateFilteringRatio(pruningKey, plan, buildKey, buildPlan, conf)
         val dynamicPruningRatio = estimateSelectiveFilteringRatio(buildPlan)
-        (1 - filterRatio) * dynamicPruningRatio
+        (1 - filterRatio) * dynamicPruningRatio *
+          conf.getConf(SQLConf.RUNTIME_BLOOM_FILTER_DYNAMIC_PARTITION_PRUNING_ADJUST_FACTOR)
       case BloomFilterMightContain(ScalarSubquery(
         Aggregate(_, Seq(Alias(AggregateExpression(
         BloomFilterAggregate(XxHash64Key(buildKey), _, _, _, _), _, _, _, _),
