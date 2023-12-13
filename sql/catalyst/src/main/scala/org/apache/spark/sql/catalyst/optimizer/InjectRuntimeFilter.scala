@@ -256,6 +256,18 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
       }
     }
 
+    def existsFilteringSubquery(plan: LogicalPlan): Boolean = {
+      plan.exists {
+        case Filter(condition, _) =>
+          splitConjunctivePredicates(condition).exists {
+            case _: DynamicPruningSubquery => true
+            case _: BloomFilterMightContain => true
+            case _ => false
+          }
+        case _ => false
+      }
+    }
+
     def extract(
         p: LogicalPlan,
         predicateReference: AttributeSet,
@@ -300,9 +312,12 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
               filteringSubquerys.nonEmpty,
             currentPlan,
             currentFilterCreationSideExp)
-          if (conf.exchangeReuseEnabled && !existsLikelySelective && filteringSubquerys.nonEmpty) {
-            extracted.map { case (e, p) =>
-              (e, ProjectAdapter(p.output, p))
+          if (conf.exchangeReuseEnabled) {
+            extracted.map {
+              case (expr, plan) if existsFilteringSubquery(plan) =>
+                (expr, ProjectAdapter(plan.output, plan))
+              case other =>
+                other
             }
           } else {
             extracted
