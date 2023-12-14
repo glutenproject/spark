@@ -70,6 +70,7 @@ private[ui] class StagePage(parent: StagesTab, store: AppStatusStore) extends We
   private def getLocalitySummaryString(localitySummary: Map[String, Long]): String = {
     val names = Map(
       TaskLocality.PROCESS_LOCAL.toString() -> "Process local",
+      TaskLocality.FORCED_NODE_LOCAL.toString() -> "Forced node local",
       TaskLocality.NODE_LOCAL.toString() -> "Node local",
       TaskLocality.RACK_LOCAL.toString() -> "Rack local",
       TaskLocality.ANY.toString() -> "Any")

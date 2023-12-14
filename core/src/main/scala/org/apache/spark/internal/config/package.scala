@@ -1856,6 +1856,10 @@ package object config {
     .version("0.8.0")
     .fallbackConf(LOCALITY_WAIT)
 
+  private[spark] val LOCALITY_WAIT_FORCED_NODE = ConfigBuilder("spark.locality.wait.forced.node")
+    .version("3.3.1")
+    .fallbackConf(LOCALITY_WAIT)
+
   private[spark] val LOCALITY_WAIT_NODE = ConfigBuilder("spark.locality.wait.node")
     .version("0.8.0")
     .fallbackConf(LOCALITY_WAIT)
