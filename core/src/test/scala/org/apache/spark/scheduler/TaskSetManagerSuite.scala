@@ -197,7 +197,7 @@ class TaskSetManagerSuite
   with PrivateMethodTester
   with Eventually
   with Logging {
-  import TaskLocality.{ANY, PROCESS_LOCAL, NO_PREF, NODE_LOCAL, RACK_LOCAL}
+  import TaskLocality.{ANY, FORCED_NODE_LOCAL, PROCESS_LOCAL, NO_PREF, NODE_LOCAL, RACK_LOCAL}
 
   private val conf = new SparkConf
 
@@ -1118,6 +1118,160 @@ class TaskSetManagerSuite
     manager.executorAdded()
     // Prior to the fix, this line resulted in an ArrayIndexOutOfBoundsException:
     assert(manager.resourceOffer("execC", "host3", ANY) !== None)
+  }
+
+  test("Ensure TaskSetManager is forced the locality preferences is host local") {
+    val conf = new SparkConf().set(config.LOCALITY_WAIT_FORCED_NODE, 9L)
+    sc = new SparkContext("local", "test", conf)
+    sched = new FakeTaskScheduler(sc)
+    val taskSet = FakeTask.createTaskSet(5,
+      Seq(TaskLocation("forced_host_host1")),
+      Seq(TaskLocation("forced_host_host2")),
+      Seq(TaskLocation("forced_host_host2")),
+      Seq(TaskLocation("forced_host_host1")),
+      Seq(TaskLocation("forced_host_host1")))
+    // Test the task set with preferred location.
+    val clock = new ManualClock
+    val manager = new TaskSetManager(sched, taskSet, MAX_TASK_FAILURES, clock = clock)
+    val accumUpdatesByTask: Array[Seq[AccumulatorV2[_, _]]] = taskSet.tasks.map { task =>
+      task.metrics.internalAccums
+    }
+    // Only ANY is valid
+    assert(manager.myLocalityLevels.sameElements(Array(ANY)))
+    // Add a new executor
+    sched.addExecutor("execA", "host1")
+    manager.executorAdded()
+    assert(manager.myLocalityLevels.sameElements(Array(FORCED_NODE_LOCAL, ANY)))
+    clock.advance(1)
+    assert(manager.resourceOffer("execA", "host1", PROCESS_LOCAL)._1 == None)
+    sched.removeExecutor("execA")
+    // Add a new executor
+    sched.addExecutor("execB", "host3")
+    manager.executorAdded()
+    assert(manager.myLocalityLevels.sameElements(Array(ANY)))
+    clock.advance(1)
+    assert(manager.resourceOffer("execB", "host3", FORCED_NODE_LOCAL)._1 == None)
+    sched.removeExecutor("execB")
+    // Add a new executor
+    sched.addExecutor("execC", "host1")
+    manager.executorAdded()
+    assert(manager.myLocalityLevels.sameElements(Array(FORCED_NODE_LOCAL, ANY)))
+    clock.advance(1)
+    val taskOption1 = manager.resourceOffer("execC", "host1", FORCED_NODE_LOCAL)._1
+    assert(taskOption1.isDefined)
+    val task1 = taskOption1.get
+    assert(task1.index === 0)
+    assert(task1.taskId === 0)
+    assert(task1.executorId === "execC")
+    assert(task1.attemptNumber === 0)
+    assert(sched.startedTasks.toSet === Set(0))
+    clock.advance(1)
+    manager.handleSuccessfulTask(0, createTaskResult(0, accumUpdatesByTask(0)))
+    assert(sched.endedTasks(0) === Success)
+    sched.removeExecutor("execC")
+    // Add a new executor
+    sched.addExecutor("execD", "host3")
+    manager.executorAdded()
+    assert(manager.myLocalityLevels.sameElements(Array(ANY)))
+    clock.advance(1)
+    assert(manager.resourceOffer("execD", "host3", NODE_LOCAL)._1 == None)
+    sched.removeExecutor("execD")
+    // Add a new executor
+    sched.addExecutor("execE", "host2")
+    manager.executorAdded()
+    assert(manager.myLocalityLevels.sameElements(Array(FORCED_NODE_LOCAL, ANY)))
+    clock.advance(1)
+    val taskOption2 = manager.resourceOffer("execE", "host2", NODE_LOCAL)._1
+    assert(taskOption2.isDefined)
+    val task2 = taskOption2.get
+    assert(task2.index === 1)
+    assert(task2.taskId === 1)
+    assert(task2.executorId === "execE")
+    assert(task2.attemptNumber === 0)
+    clock.advance(1)
+    manager.handleSuccessfulTask(1, createTaskResult(1, accumUpdatesByTask(1)))
+    assert(sched.endedTasks(1) === Success)
+    sched.removeExecutor("execE")
+    // Add a new executor
+    sched.addExecutor("execF", "host3")
+    manager.executorAdded()
+    assert(manager.myLocalityLevels.sameElements(Array(ANY)))
+    clock.advance(1)
+    assert(manager.resourceOffer("execF", "host3", NO_PREF)._1 == None)
+    sched.removeExecutor("execF")
+    // Add a new executor
+    sched.addExecutor("execG", "host2")
+    manager.executorAdded()
+    assert(manager.myLocalityLevels.sameElements(Array(FORCED_NODE_LOCAL, ANY)))
+    clock.advance(1)
+    val taskOption3 = manager.resourceOffer("execG", "host2", NO_PREF)._1
+    assert(taskOption3.isDefined)
+    val task3 = taskOption3.get
+    assert(task3.index === 2)
+    assert(task3.taskId === 2)
+    assert(task3.executorId === "execG")
+    assert(task3.attemptNumber === 0)
+    clock.advance(1)
+    manager.handleSuccessfulTask(2, createTaskResult(2, accumUpdatesByTask(2)))
+    assert(sched.endedTasks(2) === Success)
+    sched.removeExecutor("execG")
+    // Add a new executor
+    sched.addExecutor("execH", "host3")
+    manager.executorAdded()
+    assert(manager.myLocalityLevels.sameElements(Array(ANY)))
+    clock.advance(1)
+    assert(manager.resourceOffer("execH", "host3", RACK_LOCAL)._1 == None)
+    sched.removeExecutor("execH")
+    // Add a new executor
+    sched.addExecutor("execI", "host1")
+    manager.executorAdded()
+    assert(manager.myLocalityLevels.sameElements(Array(FORCED_NODE_LOCAL, ANY)))
+    clock.advance(1)
+    val taskOption4 = manager.resourceOffer("execI", "host1", RACK_LOCAL)._1
+    assert(taskOption4.isDefined)
+    val task4 = taskOption4.get
+    assert(task4.index === 3)
+    assert(task4.taskId === 3)
+    assert(task4.executorId === "execI")
+    assert(task4.attemptNumber === 0)
+    clock.advance(1)
+    manager.handleSuccessfulTask(3, createTaskResult(3, accumUpdatesByTask(3)))
+    assert(sched.endedTasks(3) === Success)
+    sched.removeExecutor("execI")
+    // Add a new executor
+    sched.addExecutor("execJ", "host3")
+    manager.executorAdded()
+    assert(manager.myLocalityLevels.sameElements(Array(ANY)))
+    clock.advance(1)
+    assert(manager.resourceOffer("execJ", "host3", ANY)._1 == None)
+//    val taskOption5 = manager.resourceOffer("execJ", "host3", ANY)._1
+//    assert(taskOption5.isDefined)
+//    val task5 = taskOption5.get
+//    assert(task5.index === 4)
+//    assert(task5.taskId === 4)
+//    assert(task5.executorId === "execJ")
+//    assert(task5.attemptNumber === 0)
+//    clock.advance(1)
+//    manager.handleSuccessfulTask(4, createTaskResult(4, accumUpdatesByTask(4)))
+//    assert(sched.endedTasks(4) === Success)
+//    sched.removeExecutor("execJ")
+
+    // Add a new executor
+    sched.addExecutor("execK", "host1")
+    manager.executorAdded()
+    assert(manager.myLocalityLevels.sameElements(Array(FORCED_NODE_LOCAL, ANY)))
+    clock.advance(1)
+    val taskOption5 = manager.resourceOffer("execK", "host1", FORCED_NODE_LOCAL)._1
+    assert(taskOption5.isDefined)
+    val task5 = taskOption5.get
+    assert(task5.index === 4)
+    assert(task5.taskId === 4)
+    assert(task5.executorId === "execK")
+    assert(task5.attemptNumber === 0)
+    clock.advance(1)
+    manager.handleSuccessfulTask(4, createTaskResult(4, accumUpdatesByTask(4)))
+    assert(sched.endedTasks(4) === Success)
+    sched.removeExecutor("execK")
   }
 
   test("Test that locations with HDFSCacheTaskLocation are treated as PROCESS_LOCAL.") {

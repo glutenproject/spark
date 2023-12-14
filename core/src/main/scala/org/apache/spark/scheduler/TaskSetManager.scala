@@ -273,7 +273,13 @@ private[spark] class TaskSetManager(
           }
         case _ =>
       }
-      pendingTaskSetToAddTo.forHost.getOrElseUpdate(loc.host, new ArrayBuffer) += index
+
+      loc match {
+        case _: ForcedHostTaskLocation =>
+          pendingTaskSetToAddTo.forForcedHost.getOrElseUpdate(loc.host, new ArrayBuffer) += index
+        case _ =>
+          pendingTaskSetToAddTo.forHost.getOrElseUpdate(loc.host, new ArrayBuffer) += index
+      }
 
       if (resolveRacks) {
         sched.getRackForHost(loc.host).foreach { rack =>
@@ -371,6 +377,12 @@ private[spark] class TaskSetManager(
       return Some((index, TaskLocality.PROCESS_LOCAL, speculative))
     }
 
+    if (TaskLocality.isAllowed(maxLocality, TaskLocality.FORCED_NODE_LOCAL)) {
+      dequeue(pendingTaskSetToUse.forForcedHost.getOrElse(host, ArrayBuffer())).foreach { index =>
+        return Some((index, TaskLocality.FORCED_NODE_LOCAL, speculative))
+      }
+    }
+
     if (TaskLocality.isAllowed(maxLocality, TaskLocality.NODE_LOCAL)) {
       dequeue(pendingTaskSetToUse.forHost.getOrElse(host, ArrayBuffer())).foreach { index =>
         return Some((index, TaskLocality.NODE_LOCAL, speculative))
@@ -394,7 +406,10 @@ private[spark] class TaskSetManager(
     }
 
     if (TaskLocality.isAllowed(maxLocality, TaskLocality.ANY)) {
-      dequeue(pendingTaskSetToUse.all).foreach { index =>
+      val nonForcedHosts = pendingTaskSetToUse.all.filterNot { index =>
+        pendingTaskSetToUse.forForcedHost.values.exists(_.contains(index))
+      }
+      dequeue(nonForcedHosts).foreach { index =>
         return Some((index, TaskLocality.ANY, speculative))
       }
     }
@@ -618,6 +633,7 @@ private[spark] class TaskSetManager(
     while (currentLocalityIndex < myLocalityLevels.length - 1) {
       val moreTasks = myLocalityLevels(currentLocalityIndex) match {
         case TaskLocality.PROCESS_LOCAL => moreTasksToRunIn(pendingTasks.forExecutor)
+        case TaskLocality.FORCED_NODE_LOCAL => moreTasksToRunIn(pendingTasks.forForcedHost)
         case TaskLocality.NODE_LOCAL => moreTasksToRunIn(pendingTasks.forHost)
         case TaskLocality.NO_PREF => pendingTasks.noPrefs.nonEmpty
         case TaskLocality.RACK_LOCAL => moreTasksToRunIn(pendingTasks.forRack)
@@ -1152,6 +1168,7 @@ private[spark] class TaskSetManager(
 
     val localityWait = level match {
       case TaskLocality.PROCESS_LOCAL => config.LOCALITY_WAIT_PROCESS
+      case TaskLocality.FORCED_NODE_LOCAL => config.LOCALITY_WAIT_FORCED_NODE
       case TaskLocality.NODE_LOCAL => config.LOCALITY_WAIT_NODE
       case TaskLocality.RACK_LOCAL => config.LOCALITY_WAIT_RACK
       case _ => null
@@ -1170,11 +1187,15 @@ private[spark] class TaskSetManager(
    *
    */
   private def computeValidLocalityLevels(): Array[TaskLocality.TaskLocality] = {
-    import TaskLocality.{PROCESS_LOCAL, NODE_LOCAL, NO_PREF, RACK_LOCAL, ANY}
+    import TaskLocality.{PROCESS_LOCAL, FORCED_NODE_LOCAL, NODE_LOCAL, NO_PREF, RACK_LOCAL, ANY}
     val levels = new ArrayBuffer[TaskLocality.TaskLocality]
     if (!pendingTasks.forExecutor.isEmpty &&
         pendingTasks.forExecutor.keySet.exists(sched.isExecutorAlive(_))) {
       levels += PROCESS_LOCAL
+    }
+    if (!pendingTasks.forForcedHost.isEmpty &&
+      pendingTasks.forForcedHost.keySet.exists(sched.hasExecutorsAliveOnHost(_))) {
+      levels += FORCED_NODE_LOCAL
     }
     if (!pendingTasks.forHost.isEmpty &&
         pendingTasks.forHost.keySet.exists(sched.hasExecutorsAliveOnHost(_))) {
@@ -1253,6 +1274,8 @@ private[scheduler] class PendingTasksByLocality {
   val noPrefs = new ArrayBuffer[Int]
   // Set of pending tasks for each rack -- similar to the above.
   val forRack = new HashMap[String, ArrayBuffer[Int]]
+  // Set containing all tasks with forced host.
+  val forForcedHost = new HashMap[String, ArrayBuffer[Int]]
   // Set containing all pending tasks (also used as a stack, as above).
   val all = new ArrayBuffer[Int]
 }

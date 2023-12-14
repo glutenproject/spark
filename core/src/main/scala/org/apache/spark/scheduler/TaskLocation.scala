@@ -36,6 +36,13 @@ case class ExecutorCacheTaskLocation(override val host: String, executorId: Stri
 }
 
 /**
+ * A location on a forced host.
+ */
+private [spark] case class ForcedHostTaskLocation(override val host: String) extends TaskLocation {
+  override def toString: String = s"${TaskLocation.forcedHostLocationTag}$host"
+}
+
+/**
  * A location on a host.
  */
 private [spark] case class HostTaskLocation(override val host: String) extends TaskLocation {
@@ -58,14 +65,17 @@ private[spark] object TaskLocation {
   // Identify locations of executors with this prefix.
   val executorLocationTag = "executor_"
 
+  // Identify locations of forced hosts with this prefix.
+  val forcedHostLocationTag = "forced_host_"
+
   def apply(host: String, executorId: String): TaskLocation = {
     new ExecutorCacheTaskLocation(host, executorId)
   }
 
   /**
    * Create a TaskLocation from a string returned by getPreferredLocations.
-   * These strings have the form executor_[hostname]_[executorid], [hostname], or
-   * hdfs_cache_[hostname], depending on whether the location is cached.
+   * These strings have the form executor_[hostname]_[executorid], [hostname],
+   * force_host_[hostname], or hdfs_cache_[hostname], depending on whether the location is cached.
    */
   def apply(str: String): TaskLocation = {
     val hstr = str.stripPrefix(inMemoryLocationTag)
@@ -76,6 +86,9 @@ private[spark] object TaskLocation {
         require(splits.length == 2, "Illegal executor location format: " + str)
         val Array(host, executorId) = splits
         new ExecutorCacheTaskLocation(host, executorId)
+      } else if (str.startsWith(forcedHostLocationTag)) {
+        val host = str.stripPrefix(forcedHostLocationTag)
+        ForcedHostTaskLocation(host)
       } else {
         new HostTaskLocation(str)
       }
