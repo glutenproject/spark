@@ -163,7 +163,8 @@ abstract class Optimizer(catalogManager: CatalogManager)
     Batch("Union", Once,
       RemoveNoopOperators,
       CombineUnions,
-      RemoveNoopUnion) ::
+      RemoveNoopUnion,
+      CombineUnionedSubquery) ::
     Batch("OptimizeLimitZero", Once,
       OptimizeLimitZero) ::
     // Run this once earlier. This might simplify the plan and reduce cost of optimizer.
