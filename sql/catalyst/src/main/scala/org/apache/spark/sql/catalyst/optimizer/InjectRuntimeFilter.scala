@@ -17,6 +17,8 @@
 
 package org.apache.spark.sql.catalyst.optimizer
 
+import scala.annotation.tailrec
+
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, BloomFilterAggregate}
 import org.apache.spark.sql.catalyst.planning.ExtractEquiJoinKeys
@@ -42,22 +44,94 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     }
   }
 
-  private def injectFilter(
+  private def inferFilterApplicationSides(
       filterApplicationSideExp: Expression,
+      filterApplicationSidePlan: LogicalPlan): Seq[Expression] = {
+    @tailrec
+    def infer(
+        currentFilterApplicationSideExp: Expression,
+        currentPlan: LogicalPlan,
+        inferred: Seq[Expression] = Seq.empty): Seq[Expression] = currentPlan match {
+      case project @ Project(_, child)
+        if project.references.exists(_.semanticEquals(currentFilterApplicationSideExp)) =>
+        if (child.exists(_.isInstanceOf[Join])) {
+          infer(currentFilterApplicationSideExp, child, inferred)
+        } else if (satisfyByteSizeRequirement(project)) {
+          inferred :+ currentFilterApplicationSideExp
+        } else {
+          inferred
+        }
+      case filter @ Filter(_, child) =>
+        if (child.exists(_.isInstanceOf[Join])) {
+          infer(currentFilterApplicationSideExp, child, inferred)
+        } else if (satisfyByteSizeRequirement(filter)) {
+          inferred :+ currentFilterApplicationSideExp
+        } else {
+          inferred
+        }
+      case ExtractEquiJoinKeys(joinType, lkeys, rkeys, _, _, left, right, hint) =>
+        if (left.output.exists(_.semanticEquals(currentFilterApplicationSideExp))) {
+          // Inferring filter application side key using depth first
+          if (canPruneRight(joinType) && !hintToBroadcastRight(hint) &&
+            !canBroadcastBySize(right, conf) && satisfyByteSizeRequirement(right)) {
+            val passedKey =
+              lkeys.zip(rkeys).find(_._1.semanticEquals(currentFilterApplicationSideExp)).map(_._2)
+
+            if (passedKey.isDefined) {
+              infer(passedKey.get, right, inferred)
+            } else {
+              infer(currentFilterApplicationSideExp, left, inferred)
+            }
+          } else {
+            infer(currentFilterApplicationSideExp, left, inferred)
+          }
+        } else if (right.output.exists(_.semanticEquals(currentFilterApplicationSideExp))) {
+          // Inferring filter application side key using depth first
+          if (canPruneLeft(joinType) && !hintToBroadcastLeft(hint) &&
+            !canBroadcastBySize(left, conf) && satisfyByteSizeRequirement(left)) {
+            val passedKey =
+              rkeys.zip(lkeys).find(_._1.semanticEquals(currentFilterApplicationSideExp)).map(_._2)
+
+            if (passedKey.isDefined) {
+              infer(passedKey.get, left, inferred)
+            } else {
+              infer(currentFilterApplicationSideExp, right, inferred)
+            }
+          } else {
+            infer(currentFilterApplicationSideExp, right, inferred)
+          }
+        } else {
+          inferred
+        }
+      case leaf: LeafNode if satisfyByteSizeRequirement(leaf) =>
+        inferred :+ currentFilterApplicationSideExp
+      case _ => inferred
+    }
+
+    if (conf.runtimeFilterApplicationSideInferenceEnabled) {
+      (filterApplicationSideExp +: infer(filterApplicationSideExp, filterApplicationSidePlan))
+        .distinct
+    } else {
+      Seq(filterApplicationSideExp)
+    }
+  }
+
+  private def injectFilter(
+      filterApplicationSideExps: Seq[Expression],
       filterApplicationSidePlan: LogicalPlan,
       filterCreationSideExp: Expression,
       filterCreationSidePlan: LogicalPlan): LogicalPlan = {
     require(conf.runtimeFilterBloomFilterEnabled || conf.runtimeFilterSemiJoinReductionEnabled)
     if (conf.runtimeFilterBloomFilterEnabled) {
       injectBloomFilter(
-        filterApplicationSideExp,
+        filterApplicationSideExps,
         filterApplicationSidePlan,
         filterCreationSideExp,
         filterCreationSidePlan
       )
     } else {
       injectInSubqueryFilter(
-        filterApplicationSideExp,
+        filterApplicationSideExps,
         filterApplicationSidePlan,
         filterCreationSideExp,
         filterCreationSidePlan
@@ -171,7 +245,7 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
   }
 
   private def injectBloomFilter(
-      filterApplicationSideExp: Expression,
+      filterApplicationSideExps: Seq[Expression],
       filterApplicationSidePlan: LogicalPlan,
       filterCreationSideExp: Expression,
       filterCreationSidePlan: LogicalPlan): LogicalPlan = {
@@ -198,24 +272,27 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
     val alias = Alias(bloomFilterAgg.toAggregateExpression(), "bloomFilter")()
     val aggregate =
       ConstantFolding(ColumnPruning(Aggregate(Nil, Seq(alias), filterCreationSidePlan)))
-    val bloomFilterSubquery = filterCreationSidePlan match {
-      case _: ProjectAdapter =>
-        // Try to reuse the results of exchange.
-        RuntimeFilterSubquery(filterApplicationSideExp, aggregate, filterCreationSideExp)
-      case _ =>
-        ScalarSubquery(aggregate, Nil)
+
+    val filters = filterApplicationSideExps.map { filterApplicationSideExp =>
+      val bloomFilterSubquery = filterCreationSidePlan match {
+        case _: ProjectAdapter =>
+          // Try to reuse the results of exchange.
+          RuntimeFilterSubquery(filterApplicationSideExp, aggregate, filterCreationSideExp)
+        case _ =>
+          ScalarSubquery(aggregate, Nil)
+      }
+      BloomFilterMightContain(bloomFilterSubquery,
+        new XxHash64(Seq(filterApplicationSideExp)))
     }
-    val filter = BloomFilterMightContain(bloomFilterSubquery,
-      new XxHash64(Seq(filterApplicationSideExp)))
-    Filter(filter, filterApplicationSidePlan)
+    Filter(filters.reduce(And), filterApplicationSidePlan)
   }
 
   private def injectInSubqueryFilter(
-      filterApplicationSideExp: Expression,
+      filterApplicationSideExps: Seq[Expression],
       filterApplicationSidePlan: LogicalPlan,
       filterCreationSideExp: Expression,
       filterCreationSidePlan: LogicalPlan): LogicalPlan = {
-    require(filterApplicationSideExp.dataType == filterCreationSideExp.dataType)
+    require(filterApplicationSideExps.forall(_.dataType == filterCreationSideExp.dataType))
     val actualFilterKeyExpr = mayWrapWithHash(filterCreationSideExp)
     val alias = Alias(actualFilterKeyExpr, actualFilterKeyExpr.toString)()
     val aggregate = ColumnPruning(Aggregate(Seq(alias), Seq(alias), filterCreationSidePlan))
@@ -224,9 +301,11 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
       // i.e., the semi-join will be a shuffled join, which is not worthwhile.
       return filterApplicationSidePlan
     }
-    val filter = InSubquery(Seq(mayWrapWithHash(filterApplicationSideExp)),
-      ListQuery(aggregate, childOutputs = aggregate.output))
-    Filter(filter, filterApplicationSidePlan)
+    val filters = filterApplicationSideExps.map { filterApplicationSideExp =>
+      InSubquery(Seq(mayWrapWithHash(filterApplicationSideExp)),
+        ListQuery(aggregate, childOutputs = aggregate.output))
+    }
+    Filter(filters.reduce(And), filterApplicationSidePlan)
   }
 
   /**
@@ -565,7 +644,10 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
             if (canPruneLeft(joinType) && (hasShuffle || probablyHasShuffle(left))) {
               extractBeneficialFilterCreatePlan(left, right, l, r).foreach {
                 case (filterCreationSideExp, filterCreationSidePlan) =>
-                  newLeft = injectFilter(l, newLeft, filterCreationSideExp, filterCreationSidePlan)
+                  val filterApplicationSideExps = inferFilterApplicationSides(l, newLeft)
+                  newLeft = injectFilter(filterApplicationSideExps, newLeft,
+                    filterCreationSideExp, filterCreationSidePlan)
+                  filterCounter = filterCounter + filterApplicationSideExps.size
               }
             }
             // Did we actually inject on the left? If not, try on the right
@@ -575,12 +657,11 @@ object InjectRuntimeFilter extends Rule[LogicalPlan] with PredicateHelper with J
               (hasShuffle || probablyHasShuffle(right))) {
               extractBeneficialFilterCreatePlan(right, left, r, l).foreach {
                 case (filterCreationSideExp, filterCreationSidePlan) =>
-                  newRight =
-                    injectFilter(r, newRight, filterCreationSideExp, filterCreationSidePlan)
+                  val filterApplicationSideExps = inferFilterApplicationSides(r, newRight)
+                  newRight = injectFilter(filterApplicationSideExps, newRight,
+                    filterCreationSideExp, filterCreationSidePlan)
+                  filterCounter = filterCounter + filterApplicationSideExps.size
               }
-            }
-            if (!newLeft.fastEquals(oldLeft) || !newRight.fastEquals(oldRight)) {
-              filterCounter = filterCounter + 1
             }
           }
         })
