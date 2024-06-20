@@ -440,13 +440,12 @@ class InjectRuntimeFilterSuite extends QueryTest with SQLTestUtils with SharedSp
       assertRewroteWithBloomFilter("select * from (select * from bf1 full outer join bf2 on " +
         "bf1.c1 = bf2.c2 where bf1.a1 = 5) as a join bf3 on bf3.c3 = a.c1", 2)
 
-      // Can't pass equivalent creation side expressions due to runtime filters already exists.
       assertRewroteWithBloomFilter("select * from bf1 join bf2 join bf3 on bf1.c1 = bf2.c2 " +
-        "and bf3.c3 = bf1.c1 where bf2.a2 = 5")
+        "and bf3.c3 = bf1.c1 where bf2.a2 = 5", 2)
       assertRewroteWithBloomFilter("select * from bf1 left outer join bf2 join bf3 on " +
-        "bf1.c1 = bf2.c2 and bf3.c3 = bf1.c1 where bf2.a2 = 5")
+        "bf1.c1 = bf2.c2 and bf3.c3 = bf1.c1 where bf2.a2 = 5", 2)
       assertRewroteWithBloomFilter("select * from bf1 right outer join bf2 join bf3 on " +
-        "bf1.c1 = bf2.c2 and bf3.c3 = bf1.c1 where bf2.a2 = 5")
+        "bf1.c1 = bf2.c2 and bf3.c3 = bf1.c1 where bf2.a2 = 5", 2)
 
       // Runtime Filter supports passing equivalent creation side expressions.
       assertRewroteWithBloomFilter("select * from (select * from bf1 join bf2 on " +
